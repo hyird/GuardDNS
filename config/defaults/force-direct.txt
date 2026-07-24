@@ -1,0 +1,3 @@
+# Known mainland domains that should prefer local recursive DNS.
+# One rule per line. Example:
+# domain:example.cn

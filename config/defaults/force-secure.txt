@@ -1,0 +1,4 @@
+# Always return a real encrypted answer, even when Mihomo fake-IP mode is on.
+full:dns.google
+full:cloudflare-dns.com
+full:doh.pub

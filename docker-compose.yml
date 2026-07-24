@@ -1,0 +1,18 @@
+services:
+  guarddns:
+    image: ghcr.io/hyird/guarddns:latest
+    container_name: guarddns
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      LOG_LEVEL: warn
+      IPV6_MODE: off
+      SOCKS5_ADDR: 172.16.0.101:7897
+      MIHOMO_DNS_ADDR: 172.16.0.101:53
+    volumes:
+      - ./data:/data
+    ports:
+      - 53:53/udp
+      - 53:53/tcp
+      - 5304:5304/udp
+      - 5304:5304/tcp

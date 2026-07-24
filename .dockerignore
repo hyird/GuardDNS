@@ -1,0 +1,9 @@
+.git
+.github
+.idea
+.vscode
+docs
+routeros
+tests
+*.md
+docker-compose.yml

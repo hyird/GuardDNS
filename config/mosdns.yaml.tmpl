@@ -1,0 +1,158 @@
+log:
+  level: __LOG_LEVEL__
+  file: ''
+
+# The selected foreign-path fragment is loaded first. It owns the encrypted
+# upstream, the real-answer cache, and (optionally) the Mihomo validation gate.
+include:
+  - /run/guarddns/foreign.yaml
+
+plugins:
+  - tag: force_secure_domains
+    type: domain_set
+    args:
+      files:
+        - /data/force-secure.txt
+
+  - tag: force_fakeip_domains
+    type: domain_set
+    args:
+      files:
+        - /data/force-fakeip.txt
+
+  - tag: force_direct_domains
+    type: domain_set
+    args:
+      files:
+        - /data/force-direct.txt
+
+  - tag: private_domains
+    type: domain_set
+    args:
+      exps:
+        - localhost
+        - local
+        - lan
+        - home.arpa
+        - internal
+
+  - tag: global_domains
+    type: domain_set
+    args:
+      files:
+        - /usr/share/guarddns/rules/proxy.txt
+
+  - tag: cn_domains
+    type: domain_set
+    args:
+      files:
+        - /usr/share/guarddns/rules/direct.txt
+
+  - tag: cn_ips
+    type: ip_set
+    args:
+      files:
+        - /usr/share/guarddns/rules/cncidr.txt
+
+  - tag: main_cache
+    type: cache
+    args:
+      size: __CACHE_SIZE__
+      lazy_cache_ttl: 0
+
+  - tag: forward_unbound
+    type: forward
+    args:
+      upstreams:
+        - addr: 127.0.0.1:5335
+
+  - tag: direct_path
+    type: sequence
+    args:
+      - exec: $forward_unbound
+
+  # Unbound is accepted only for successful A/AAAA answers containing a
+  # mainland IP. Failure, NODATA, and non-mainland IPs fall back to DoH.
+  - tag: cn_primary
+    type: sequence
+    args:
+      - exec: $forward_unbound
+      - matches:
+          - '!rcode 0'
+        exec: drop_resp
+      - matches:
+          - qtype 1 28
+          - '!resp_ip $cn_ips'
+        exec: drop_resp
+
+  - tag: cn_fallback
+    type: fallback
+    args:
+      primary: cn_primary
+      secondary: secure_real_path
+      threshold: __FAST_FALLBACK_MS__
+      always_standby: true
+
+  - tag: cn_path
+    type: sequence
+    args:
+      - exec: $cn_fallback
+
+  - tag: main_sequence
+    type: sequence
+    args:
+      # The cache is a recursive executable: on a miss it runs the remainder
+      # of this sequence and stores the resulting response.
+      - exec: $main_cache
+      - matches:
+          - __IPV6_BLOCK_MATCH__
+        exec: reject 0
+      - matches:
+          - qname $private_domains
+        exec: reject 3
+      - matches:
+          - qname $force_secure_domains
+        exec: goto secure_real_path
+      - matches:
+          - qname $force_fakeip_domains
+        exec: goto foreign_path
+      - matches:
+          - qname $force_direct_domains
+        exec: goto direct_path
+      # Resolve overlaps on the safer encrypted/global path.
+      - matches:
+          - qname $global_domains
+        exec: goto foreign_path
+      - matches:
+          - qname $cn_domains
+        exec: goto cn_path
+      # Unknown names fail closed to encrypted DNS.
+      - exec: goto foreign_path
+
+  - tag: main_udp
+    type: udp_server
+    args:
+      entry: main_sequence
+      listen: __LISTEN_ADDR__
+
+  - tag: main_tcp
+    type: tcp_server
+    args:
+      entry: main_sequence
+      listen: __LISTEN_ADDR__
+      idle_timeout: 10
+
+  # Port 5304 always returns a real answer. It is safe to use as Mihomo's
+  # nameserver without recursively entering the fake-IP path.
+  - tag: secure_udp
+    type: udp_server
+    args:
+      entry: secure_real_path
+      listen: __SECURE_LISTEN_ADDR__
+
+  - tag: secure_tcp
+    type: tcp_server
+    args:
+      entry: secure_real_path
+      listen: __SECURE_LISTEN_ADDR__
+      idle_timeout: 10

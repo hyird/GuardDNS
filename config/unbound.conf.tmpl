@@ -1,0 +1,72 @@
+server:
+  verbosity: 1
+  use-syslog: no
+  log-time-ascii: yes
+  log-queries: no
+  log-replies: no
+
+  interface: 127.0.0.1@5335
+  access-control: 127.0.0.0/8 allow
+  port: 5335
+  username: unbound
+  chroot: ""
+  directory: "/run/guarddns/unbound"
+  pidfile: "/run/guarddns/unbound/unbound.pid"
+
+  do-ip4: yes
+  do-ip6: __UNBOUND_IPV6__
+  do-udp: yes
+  do-tcp: yes
+  prefer-ip6: no
+  edns-buffer-size: 1232
+  max-udp-size: 1232
+
+  num-threads: 2
+  so-reuseport: yes
+  outgoing-range: 256
+  num-queries-per-thread: 128
+  msg-cache-size: 16m
+  rrset-cache-size: 32m
+  key-cache-size: 8m
+  infra-cache-numhosts: 2048
+
+  module-config: "validator iterator"
+  auto-trust-anchor-file: "/run/guarddns/unbound/root.key"
+  val-clean-additional: yes
+  harden-glue: yes
+  harden-dnssec-stripped: yes
+  harden-below-nxdomain: yes
+  harden-algo-downgrade: yes
+  harden-large-queries: yes
+  harden-short-bufsize: yes
+  harden-referral-path: yes
+  qname-minimisation: yes
+  qname-minimisation-strict: no
+  aggressive-nsec: yes
+  deny-any: yes
+  unwanted-reply-threshold: 100000
+
+  prefetch: yes
+  prefetch-key: yes
+  serve-expired: no
+  cache-min-ttl: 0
+  cache-max-ttl: 86400
+  cache-max-negative-ttl: 900
+
+  hide-identity: yes
+  hide-version: yes
+  identity: "GuardDNS"
+  version: "GuardDNS"
+
+  private-address: 10.0.0.0/8
+  private-address: 100.64.0.0/10
+  private-address: 127.0.0.0/8
+  private-address: 169.254.0.0/16
+  private-address: 172.16.0.0/12
+  private-address: 192.168.0.0/16
+  private-address: ::1/128
+  private-address: fc00::/7
+  private-address: fe80::/10
+
+remote-control:
+  control-enable: no

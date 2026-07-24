@@ -1,0 +1,63 @@
+plugins:
+  - tag: forward_remote
+    type: forward
+    args:
+      concurrent: 2
+__SOCKS5_LINE__
+      upstreams:
+        - tag: cloudflare
+          addr: https://cloudflare-dns.com/dns-query
+          dial_addr: 1.1.1.1:443
+        - tag: google
+          addr: https://dns.google/dns-query
+          dial_addr: 8.8.8.8:443
+
+  - tag: secure_cache
+    type: cache
+    args:
+      size: __SECURE_CACHE_SIZE__
+      lazy_cache_ttl: 0
+
+  - tag: secure_real_path
+    type: sequence
+    args:
+      - exec: $secure_cache
+      - exec: $forward_remote
+
+  - tag: forward_mihomo
+    type: forward
+    args:
+      upstreams:
+        - addr: __MIHOMO_DNS_ADDR__
+
+  - tag: fakeip_query
+    type: sequence
+    args:
+      - exec: drop_resp
+      - exec: $forward_mihomo
+
+  # A/AAAA is sent to Mihomo only after encrypted DNS produced a successful,
+  # wanted answer. NXDOMAIN, SERVFAIL, and NODATA stay untouched.
+  - tag: foreign_primary
+    type: sequence
+    args:
+      - exec: $secure_real_path
+      - matches:
+          - qtype 1 28
+          - rcode 0
+          - has_wanted_ans
+        exec: jump fakeip_query
+
+  # If Mihomo is unavailable, return the already validated real answer.
+  - tag: foreign_fallback
+    type: fallback
+    args:
+      primary: foreign_primary
+      secondary: secure_real_path
+      threshold: 900
+      always_standby: false
+
+  - tag: foreign_path
+    type: sequence
+    args:
+      - exec: $foreign_fallback
