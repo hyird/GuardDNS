@@ -7,7 +7,7 @@ successor to monolithic DNS bundles.
 It combines:
 
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
-- Unbound 1.25.2 for local recursive DNS with DNSSEC validation.
+- Alpine-packaged Unbound 1.25.1 for local recursive DNS with DNSSEC validation.
 - Cloudflare and Google DoH with fixed dial IPs for encrypted global answers.
 - Optional SOCKS5 transport through Mihomo.
 - Optional validate-before-fake-IP integration with Mihomo.
