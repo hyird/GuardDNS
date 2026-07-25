@@ -6,8 +6,8 @@ ARG ALPINE_MIRROR=
 FROM alpine:${ALPINE_VERSION} AS mosdns-downloader
 
 ARG MOSDNS_VERSION=5.3.4
-ARG TARGETARCH=amd64
-ARG TARGETVARIANT=
+ARG TARGETARCH
+ARG TARGETVARIANT
 ARG ALPINE_MIRROR
 
 RUN if [ -n "$ALPINE_MIRROR" ]; then \
@@ -18,7 +18,9 @@ RUN if [ -n "$ALPINE_MIRROR" ]; then \
 COPY .test-assets/ /vendor/
 
 RUN set -eux; \
-    case "${TARGETARCH}/${TARGETVARIANT}" in \
+    target_arch="${TARGETARCH:-amd64}"; \
+    target_variant="${TARGETVARIANT:-}"; \
+    case "${target_arch}/${target_variant}" in \
       amd64/) \
         asset="mosdns-linux-amd64.zip"; \
         checksum="3abcc73080789eb1ccca78dab5049b85ac1e9b8f865ab60158a527b77cd72e85" \
@@ -32,7 +34,7 @@ RUN set -eux; \
         checksum="90c9657c572f4424dba4eaf8cf24a5a8d7b6cde96b71657ef7c93045dfef3ce3" \
         ;; \
       *) \
-        echo "Unsupported target: ${TARGETARCH}/${TARGETVARIANT}" >&2; \
+        echo "Unsupported target: ${target_arch}/${target_variant}" >&2; \
         exit 1 \
         ;; \
     esac; \
