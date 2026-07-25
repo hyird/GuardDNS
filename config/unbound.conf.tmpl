@@ -21,8 +21,8 @@ server:
   edns-buffer-size: 1232
   max-udp-size: 1232
 
-  num-threads: 2
-  so-reuseport: yes
+  num-threads: 1
+  so-reuseport: no
   outgoing-range: 256
   num-queries-per-thread: 128
   msg-cache-size: 16m
@@ -39,7 +39,7 @@ server:
   harden-algo-downgrade: yes
   harden-large-queries: yes
   harden-short-bufsize: yes
-  harden-referral-path: yes
+  harden-referral-path: no
   qname-minimisation: yes
   qname-minimisation-strict: no
   aggressive-nsec: yes

@@ -97,9 +97,61 @@ RUN set -eux; \
     test -s /out/proxy.txt; \
     test -s /out/cncidr.txt
 
+FROM alpine:${ALPINE_VERSION} AS unbound-builder
+
+ARG ALPINE_MIRROR
+ARG UNBOUND_VERSION=1.25.2
+ARG UNBOUND_SHA256=0d92275c703d5f5f8baba3dab22117dd8c29b495588a5c229768ed6581566600
+
+RUN if [ -n "$ALPINE_MIRROR" ]; then \
+      sed -i "s|https://dl-cdn.alpinelinux.org/alpine|$ALPINE_MIRROR|g" /etc/apk/repositories; \
+    fi \
+    && apk add --no-cache \
+      build-base \
+      ca-certificates \
+      curl \
+      expat-dev \
+      libevent-dev \
+      openssl-dev
+
+COPY .test-assets/ /vendor/
+
+RUN set -eux; \
+    if [ -s /vendor/unbound.tar.gz ]; then \
+      cp /vendor/unbound.tar.gz /tmp/unbound.tar.gz; \
+    else \
+      curl -fsSL --retry 5 \
+        "https://nlnetlabs.nl/downloads/unbound/unbound-${UNBOUND_VERSION}.tar.gz" \
+        -o /tmp/unbound.tar.gz; \
+    fi; \
+    echo "${UNBOUND_SHA256}  /tmp/unbound.tar.gz" | sha256sum -c -; \
+    mkdir -p /src; \
+    tar -xzf /tmp/unbound.tar.gz -C /src --strip-components=1; \
+    cd /src; \
+    ./configure \
+      --prefix=/usr \
+      --sysconfdir=/etc/unbound \
+      --localstatedir=/var \
+      --with-conf-file=/etc/unbound/unbound.conf \
+      --with-run-dir=/run/unbound \
+      --with-pidfile=/run/unbound/unbound.pid \
+      --with-rootkey-file=/usr/share/dnssec-root/trusted-key.key \
+      --with-username=unbound \
+      --with-libevent \
+      --with-libexpat=/usr \
+      --with-ssl \
+      --with-pthreads \
+      --without-pythonmodule \
+      --without-pyunbound \
+      --disable-flto \
+      --disable-sha1 \
+      --disable-dsa; \
+    make -j"$(getconf _NPROCESSORS_ONLN)"; \
+    make DESTDIR=/out install
+
 FROM alpine:${ALPINE_VERSION}
 
-ARG UNBOUND_VERSION=1.25.1-r0
+ARG UNBOUND_VERSION=1.25.2
 ARG MOSDNS_VERSION=5.3.4
 ARG ALPINE_MIRROR
 
@@ -113,18 +165,26 @@ RUN if [ -n "$ALPINE_MIRROR" ]; then \
       sed -i "s|https://dl-cdn.alpinelinux.org/alpine|$ALPINE_MIRROR|g" /etc/apk/repositories; \
     fi \
     && apk add --no-cache \
-      "unbound=${UNBOUND_VERSION}" \
       ca-certificates \
+      dnssec-root \
+      expat \
+      libevent \
+      libssl3 \
       tini \
       tzdata \
+    && addgroup -S unbound \
+    && adduser -S -D -H -h /etc/unbound -s /sbin/nologin -G unbound unbound \
     && mkdir -p /etc/guarddns /usr/share/guarddns/rules /run/guarddns/unbound /data
 
 COPY --from=mosdns-downloader /out/mosdns /usr/local/bin/mosdns
 COPY --from=rules-downloader /out/ /usr/share/guarddns/rules/
+COPY --from=unbound-builder /out/usr/sbin/unbound /usr/sbin/unbound
+COPY --from=unbound-builder /out/usr/sbin/unbound-checkconf /usr/sbin/unbound-checkconf
 COPY config/ /etc/guarddns/
 COPY scripts/entrypoint.sh /usr/local/bin/guarddns-entrypoint
 
 RUN chmod 0755 /usr/local/bin/guarddns-entrypoint \
+    && unbound -V | grep -F "Version ${UNBOUND_VERSION}" \
     && cp /usr/share/dnssec-root/trusted-key.key /run/guarddns/unbound/root.key \
     && chown -R unbound:unbound /run/guarddns/unbound \
     && sed 's/__UNBOUND_IPV6__/no/g' /etc/guarddns/unbound.conf.tmpl > /tmp/unbound.conf \
