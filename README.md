@@ -82,7 +82,9 @@ real answer through encrypted DNS, making it safe as Mihomo's upstream.
 Only these two operational choices are configurable. IPv6 is always disabled.
 Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:9091`;
 the timezone is `Asia/Shanghai`; CN/secure cache sizes are `16384`/`8192`;
-and the CN fallback threshold is `350ms`.
+Known-CN lookups wait for their real response before the returned IP is
+classified. This avoids racing a healthy but slower CN response against
+Mihomo's fake-IP response.
 
 `AUTO_FORWARD` accepts `no`, a host/IPv4 address, or `host:port`. The DNS port
 defaults to `53` when omitted. Setting an address sends validated non-CN A

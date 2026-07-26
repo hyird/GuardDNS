@@ -82,37 +82,23 @@ plugins:
     args:
       - exec: $forward_unbound
 
-  # Unbound is accepted only for successful A answers containing a mainland
-  # IP. Failure, NODATA, and non-mainland IPs enter the foreign policy.
-  - tag: cn_primary
-    type: sequence
-    args:
-      - exec: $forward_unbound
-      - matches:
-          - '!rcode 0'
-        exec: drop_resp
-      - matches:
-          - qtype 1
-          - '!resp_ip $cn_ips'
-        exec: drop_resp
-
-  - tag: cn_fallback
-    type: fallback
-    args:
-      primary: cn_primary
-      # A known-CN name can still resolve outside CN. Route that result through
-      # the same Mihomo AUTO_FORWARD policy as every other non-CN answer.
-      secondary: foreign_path
-      threshold: 350
-      always_standby: false
-
   - tag: cn_path
     type: sequence
     args:
       # Cache only the CN path. Final AUTO_FORWARD/fake-IP responses are never
       # stored by GuardDNS, so an opened circuit takes effect immediately.
       - exec: $cn_cache
-      - exec: $cn_fallback
+      - exec: $forward_unbound
+      # Decide from the completed real response instead of racing a timed
+      # fallback. This prevents a slow but healthy CN lookup from being
+      # overtaken by Mihomo's fake-IP response.
+      - matches:
+          - '!rcode 0'
+        exec: goto foreign_path
+      - matches:
+          - qtype 1
+          - '!resp_ip $cn_ips'
+        exec: goto foreign_path
 
   - tag: main_sequence
     type: sequence
