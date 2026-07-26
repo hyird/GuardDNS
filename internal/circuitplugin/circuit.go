@@ -19,13 +19,15 @@ import (
 const pluginType = "guarddns_circuit"
 
 var (
-	errCircuitOpen = errors.New("AUTO_FORWARD circuit is open")
-	errNoResponse  = errors.New("AUTO_FORWARD upstream returned no response")
+	errCircuitOpen    = errors.New("AUTO_FORWARD circuit is open")
+	errNoResponse     = errors.New("AUTO_FORWARD upstream returned no response")
+	errAttemptTimeout = errors.New("AUTO_FORWARD upstream attempt timed out")
 )
 
 type Args struct {
 	Primary              string `yaml:"primary"`
 	FailureThreshold     int    `yaml:"failure_threshold"`
+	AttemptTimeoutMillis int    `yaml:"attempt_timeout_millis"`
 	InitialBackoffMillis int    `yaml:"initial_backoff_millis"`
 	MaxBackoffMillis     int    `yaml:"max_backoff_millis"`
 	FailureRCodes        []int  `yaml:"failure_rcodes"`
@@ -151,11 +153,12 @@ func jitterDelay(nominal, maximum time.Duration) time.Duration {
 }
 
 type Plugin struct {
-	primary       sequence.Executable
-	circuit       *circuit
-	failureRCodes map[int]struct{}
-	registerer    prometheus.Registerer
-	collectors    []prometheus.Collector
+	primary        sequence.Executable
+	circuit        *circuit
+	attemptTimeout time.Duration
+	failureRCodes  map[int]struct{}
+	registerer     prometheus.Registerer
+	collectors     []prometheus.Collector
 }
 
 func init() {
@@ -171,6 +174,10 @@ func initPlugin(bp *coremain.BP, raw any) (any, error) {
 	threshold := args.FailureThreshold
 	if threshold <= 0 {
 		threshold = 2
+	}
+	attemptTimeout := time.Duration(args.AttemptTimeoutMillis) * time.Millisecond
+	if attemptTimeout <= 0 {
+		attemptTimeout = time.Second
 	}
 	initial := time.Duration(args.InitialBackoffMillis) * time.Millisecond
 	if initial <= 0 {
@@ -217,7 +224,8 @@ func initPlugin(bp *coremain.BP, raw any) (any, error) {
 		failureRCodes[rcode] = struct{}{}
 	}
 	return &Plugin{
-		primary: primary,
+		primary:        primary,
+		attemptTimeout: attemptTimeout,
 		circuit: &circuit{
 			name:             bp.Tag(),
 			failureThreshold: threshold,
@@ -243,10 +251,33 @@ func (p *Plugin) Exec(ctx context.Context, qCtx *query_context.Context) error {
 		return errCircuitOpen
 	}
 
-	err := p.primary.Exec(ctx, qCtx)
-	response := qCtx.R()
+	// MosDNS's forward plugin uses a fixed five-second upstream deadline. Run
+	// it against a private query context so GuardDNS can declare the attempt
+	// failed sooner without a late response mutating the caller's context.
+	attemptCtx := qCtx.Copy()
+	result := make(chan error, 1)
+	go func() {
+		result <- p.primary.Exec(ctx, attemptCtx)
+	}()
+
+	timer := time.NewTimer(p.attemptTimeout)
+	defer timer.Stop()
+
+	var err error
+	var response *dns.Msg
+	select {
+	case err = <-result:
+		response = attemptCtx.R()
+	case <-timer.C:
+		err = errAttemptTimeout
+	case <-ctx.Done():
+		qCtx.SetResponse(nil)
+		return context.Cause(ctx)
+	}
+
 	if err == nil && response != nil {
 		if _, failed := p.failureRCodes[response.Rcode]; !failed {
+			qCtx.SetResponse(response)
 			p.circuit.succeed()
 			return nil
 		}

@@ -37,6 +37,7 @@ plugins:
     args:
       primary: forward_auto_raw
       failure_threshold: 2
+      attempt_timeout_millis: 1000
       initial_backoff_millis: 1000
       max_backoff_millis: 300000
       # SERVFAIL and REFUSED indicate that Mihomo's DNS service is not usable.

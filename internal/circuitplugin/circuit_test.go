@@ -1,10 +1,14 @@
 package circuitplugin
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/IrineSistiana/mosdns/v5/pkg/query_context"
+	"github.com/IrineSistiana/mosdns/v5/plugin/executable/sequence"
+	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -60,5 +64,45 @@ func TestCircuitRequiresConsecutiveFailuresAndBacksOff(t *testing.T) {
 func TestExponentialDelayCaps(t *testing.T) {
 	if got := exponentialDelay(time.Second, 30*time.Second, 10); got != 30*time.Second {
 		t.Fatalf("delay = %s", got)
+	}
+}
+
+func TestAttemptTimeoutOpensCircuitWithoutLateResponseMutation(t *testing.T) {
+	c := testCircuit()
+	c.failureThreshold = 1
+	workerFinished := make(chan struct{})
+	p := &Plugin{
+		primary: sequence.ExecutableFunc(func(_ context.Context, qCtx *query_context.Context) error {
+			defer close(workerFinished)
+			time.Sleep(30 * time.Millisecond)
+			response := new(dns.Msg)
+			response.SetReply(qCtx.Q())
+			response.Answer = append(response.Answer, &dns.A{
+				Hdr: dns.RR_Header{Name: qCtx.Q().Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET},
+			})
+			qCtx.SetResponse(response)
+			return nil
+		}),
+		circuit:        c,
+		attemptTimeout: time.Millisecond,
+		failureRCodes:  map[int]struct{}{},
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+	qCtx := query_context.NewContext(query)
+
+	err := p.Exec(context.Background(), qCtx)
+	if !errors.Is(err, errAttemptTimeout) {
+		t.Fatalf("Exec error = %v, want %v", err, errAttemptTimeout)
+	}
+	if qCtx.R() != nil {
+		t.Fatal("timed-out attempt mutated caller response")
+	}
+	if c.backoffStep != 1 {
+		t.Fatal("timed-out attempt did not open circuit")
+	}
+	<-workerFinished
+	if qCtx.R() != nil {
+		t.Fatal("late upstream response mutated caller response")
 	}
 }
