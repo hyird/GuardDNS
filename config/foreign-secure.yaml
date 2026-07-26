@@ -3,7 +3,6 @@ plugins:
     type: forward
     args:
       concurrent: 2
-__SOCKS5_LINE__
       upstreams:
         - tag: cloudflare
           addr: https://cloudflare-dns.com/dns-query
@@ -15,7 +14,7 @@ __SOCKS5_LINE__
   - tag: secure_cache
     type: cache
     args:
-      size: __SECURE_CACHE_SIZE__
+      size: 8192
       lazy_cache_ttl: 0
 
   - tag: secure_real_path

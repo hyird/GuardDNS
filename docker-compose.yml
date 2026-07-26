@@ -4,11 +4,8 @@ services:
     container_name: guarddns
     restart: unless-stopped
     environment:
-      TZ: Asia/Shanghai
+      AUTO_FORWARD: 172.16.0.101
       LOG_LEVEL: warn
-      IPV6_MODE: off
-      SOCKS5_ADDR: 172.16.0.101:7897
-      MIHOMO_DNS_ADDR: 172.16.0.101:53
     volumes:
       - ./data:/data
     ports:
@@ -16,3 +13,4 @@ services:
       - 53:53/tcp
       - 5304:5304/udp
       - 5304:5304/tcp
+      - 127.0.0.1:9091:9091/tcp

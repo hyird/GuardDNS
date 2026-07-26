@@ -9,22 +9,22 @@ It combines:
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for local recursive DNS with DNSSEC validation.
 - Cloudflare and Google DoH with fixed dial IPs for encrypted global answers.
-- Optional SOCKS5 transport through Mihomo.
-- Optional validate-before-fake-IP integration with Mihomo.
+- Optional Mihomo DNS integration for validated fake-IP.
+- Docker health checks and Prometheus runtime metrics.
 
 ## Why it is stricter
 
 | Property | GuardDNS behavior |
 | --- | --- |
-| Unknown domains | Encrypted path by default; no plaintext probing |
-| Global DNS | DoH only; no AliDNS and no plaintext `8.8.8.8:53` |
-| Mainland DNS | Unbound recursion accepted only when A/AAAA answers contain CN IPs; otherwise encrypted fallback |
-| Fake-IP | A/AAAA existence is checked through encrypted DNS before asking Mihomo for fake-IP |
+| Unknown domains | Encrypted validation first; valid A answers use Mihomo DNS when AUTO_FORWARD is enabled |
+| Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in DoH otherwise and during outage |
+| Mainland DNS | Unbound recursion accepted only when A answers contain CN IPs; non-CN answers enter the global path |
+| Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
-| Cache | Separate main/secure memory caches; stale serving disabled |
+| Cache | Separate CN/secure-real caches; fake-IP is never cached by GuardDNS |
 | Bootstrap | DoH endpoints use fixed dial IPs, so no bootstrap resolver is needed |
 | Runtime state | No Redis and no runtime mutation of upstream rule files |
-| Supply chain | Pinned MosDNS checksums, verified rule checksums, CI SBOM and provenance |
+| Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
 
 The routing policy is intentionally fail-closed:
 
@@ -51,6 +51,7 @@ docker run -d \
   -v ./data:/data \
   -p 53:53/udp -p 53:53/tcp \
   -p 5304:5304/udp -p 5304:5304/tcp \
+  -p 127.0.0.1:9091:9091/tcp \
   ghcr.io/hyird/guarddns:latest
 ```
 
@@ -61,11 +62,10 @@ docker run -d \
   --name guarddns \
   --restart unless-stopped \
   -v ./data:/data \
-  -e SOCKS5_ADDR=172.16.0.101:7897 \
-  -e MIHOMO_DNS_ADDR=172.16.0.101:53 \
-  -e IPV6_MODE=off \
+  -e AUTO_FORWARD=172.16.0.101 \
   -p 53:53/udp -p 53:53/tcp \
   -p 5304:5304/udp -p 5304:5304/tcp \
+  -p 127.0.0.1:9091:9091/tcp \
   ghcr.io/hyird/guarddns:latest
 ```
 
@@ -77,16 +77,57 @@ real answer through encrypted DNS, making it safe as Mihomo's upstream.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, or `error` |
-| `LISTEN_ADDR` | `0.0.0.0:53` | Main UDP/TCP listener |
-| `SECURE_LISTEN_ADDR` | `0.0.0.0:5304` | Real-answer encrypted listener |
-| `SOCKS5_ADDR` | empty | Optional `host:port` used by both DoH upstreams |
-| `MIHOMO_DNS_ADDR` | empty | Optional Mihomo DNS `host:port`; enables validated fake-IP |
-| `IPV6_MODE` | `off` | `off` returns empty AAAA; `on` enables IPv6 |
-| `CACHE_SIZE` | `16384` | Main cache entries; secure cache uses half |
-| `FAST_FALLBACK_MS` | `350` | CN recursion fallback threshold |
+| `AUTO_FORWARD` | `no` | `no` or Mihomo DNS `host[:port]`; the port defaults to `53` |
 
-Endpoint variables are validated before configuration rendering. Shell
-metacharacters and malformed values are rejected.
+Only these two operational choices are configurable. IPv6 is always disabled.
+Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:9091`;
+the timezone is `Asia/Shanghai`; CN/secure cache sizes are `16384`/`8192`;
+and the CN fallback threshold is `350ms`.
+
+`AUTO_FORWARD` accepts `no`, a host/IPv4 address, or `host:port`. The DNS port
+defaults to `53` when omitted. Setting an address sends validated non-CN A
+queries to that Mihomo DNS service for fake-IP; SOCKS5 is not used. GuardDNS
+first verifies the domain with its built-in encrypted real-IP resolver. If
+Mihomo DNS fails, it reuses that same real answer without another lookup.
+Failures use exponential retry delays from `1s` to `5min`; while the circuit is
+open, queries bypass Mihomo immediately. A half-open probe restores forwarding
+automatically after recovery. Set it to `no` to use encrypted real IP only.
+
+Logs always go to the container's standard output/error stream and are never
+written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
+verbosity through the same setting.
+
+## Health and metrics
+
+The Go entrypoint independently supervises MosDNS and Unbound. If either child
+exits, it is restarted with jittered exponential delays from `1s` to `30s`;
+the container stays up and the other resolver continues serving what it can.
+The health check uses `/plugins/guarddns/healthz`. A restarting Unbound reports
+`degraded` but stays healthy because MosDNS can use encrypted fallback; missing
+MosDNS or stale supervisor state reports unhealthy.
+
+Supervisor state is sent to MosDNS through the Unix datagram socket
+`/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
+The only private DNS data path is the existing loopback connection from MosDNS
+to Unbound on `127.0.0.1:5335`; it is not exposed by the image.
+
+Prometheus metrics are available at `/metrics` on the fixed container listener
+`0.0.0.0:9091`. The Docker examples expose it only on host loopback:
+
+```text
+http://127.0.0.1:9091/metrics
+```
+
+In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports
+end-to-end counters and latency histograms with the collector names `main` and
+`secure`. Upstream metrics distinguish `cloudflare`, `google`, `unbound`, and
+`auto_forward`. Supervisor metrics
+begin with `mosdns_guarddns_component_`; circuit state, retry delay, failures,
+and bypasses begin with `mosdns_guarddns_circuit_`.
+
+MosDNS also exposes profiling handlers under `/debug/pprof` on the same HTTP
+listener. Never publish this port to an untrusted network; restrict it with a
+host binding or firewall.
 
 ## Custom rules
 
@@ -137,15 +178,17 @@ dns:
 ```
 
 `proxy-server-nameserver` must remain independent from GuardDNS so Mihomo can
-resolve proxy node hostnames during bootstrap. GuardDNS's DoH traffic can then
-travel through Mihomo SOCKS5 without creating a DNS loop.
+resolve proxy node hostnames during bootstrap. When Mihomo needs a real answer
+for an AUTO_FORWARD query, its `nameserver` uses GuardDNS port `5304`; that
+listener always uses built-in encrypted DNS and never forwards back to Mihomo,
+so the DNS path does not loop.
 
 Add subscription/control-plane domains to `force-secure.txt` and Mihomo's
 `fake-ip-filter`, so they always receive real addresses.
 
 ## Validation
 
-Local integration tests build a mock Mihomo DNS and verify:
+Local integration tests build a mock Mihomo DNS endpoint and verify:
 
 - mainland domains do not receive fake-IP;
 - global domains receive fake-IP only after encrypted validation;
@@ -155,6 +198,10 @@ Local integration tests build a mock Mihomo DNS and verify:
 - NODATA is not converted to fake-IP;
 - secure real-IP mode and both UDP/TCP listeners start correctly;
 - IPv6 policy and environment input validation.
+- the container health check and Prometheus listener metrics.
+- AUTO_FORWARD custom ports, seamless failure fallback, exponential backoff,
+  and half-open recovery.
+- independent MosDNS/Unbound crash recovery and restart metrics.
 
 Run:
 
@@ -168,7 +215,7 @@ GitHub Actions runs the same test before publishing multi-architecture
 builds also pick up patched Alpine packages while rule snapshots remain pinned
 to reviewable upstream release/commit identifiers.
 
-For restricted build networks, release assets may be placed in the ignored
-`.test-assets` directory. The Dockerfile uses matching vendored files when
-present and still verifies their upstream checksums. Normal CI builds leave
-that directory empty and download directly from the official releases.
+For restricted build networks, rule release assets may be placed in the ignored
+`.test-assets` directory. The Dockerfile still verifies their upstream
+checksums. MosDNS and the GuardDNS supervisor are reproducibly built from the
+pinned `go.mod`/`go.sum` module graph.

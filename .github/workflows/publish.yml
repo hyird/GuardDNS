@@ -79,7 +79,11 @@ jobs:
           docker run --rm \
             --platform "${{ matrix.platform }}" \
             --entrypoint /usr/local/bin/mosdns \
-            "guarddns:${{ matrix.tag }}" version | grep '^v5\.3\.4'
+            "guarddns:${{ matrix.tag }}" version | grep '^v5\.3\.4-guarddns$'
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            --entrypoint /usr/local/bin/guarddns \
+            "guarddns:${{ matrix.tag }}" version | grep '^v5\.3\.4-guarddns$'
 
   publish:
     needs:

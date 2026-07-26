@@ -1,5 +1,5 @@
 server:
-  verbosity: 1
+  verbosity: __UNBOUND_VERBOSITY__
   use-syslog: no
   log-time-ascii: yes
   log-queries: no
@@ -14,7 +14,7 @@ server:
   pidfile: "/run/guarddns/unbound/unbound.pid"
 
   do-ip4: yes
-  do-ip6: __UNBOUND_IPV6__
+  do-ip6: no
   do-udp: yes
   do-tcp: yes
   prefer-ip6: no

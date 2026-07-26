@@ -2,12 +2,22 @@ log:
   level: __LOG_LEVEL__
   file: ''
 
+api:
+  http: '0.0.0.0:9091'
+
 # The selected foreign-path fragment is loaded first. It owns the encrypted
 # upstream, the real-answer cache, and (optionally) the Mihomo validation gate.
 include:
   - /run/guarddns/foreign.yaml
 
 plugins:
+  # The Go entry process reports child state over this Unix datagram socket.
+  # No private supervision or metrics TCP port is opened.
+  - tag: guarddns
+    type: guarddns_supervisor
+    args:
+      socket: /run/guarddns/supervisor.sock
+
   - tag: force_secure_domains
     type: domain_set
     args:
@@ -54,25 +64,26 @@ plugins:
       files:
         - /usr/share/guarddns/rules/cncidr.txt
 
-  - tag: main_cache
+  - tag: cn_cache
     type: cache
     args:
-      size: __CACHE_SIZE__
+      size: 16384
       lazy_cache_ttl: 0
 
   - tag: forward_unbound
     type: forward
     args:
       upstreams:
-        - addr: 127.0.0.1:5335
+        - tag: unbound
+          addr: 127.0.0.1:5335
 
   - tag: direct_path
     type: sequence
     args:
       - exec: $forward_unbound
 
-  # Unbound is accepted only for successful A/AAAA answers containing a
-  # mainland IP. Failure, NODATA, and non-mainland IPs fall back to DoH.
+  # Unbound is accepted only for successful A answers containing a mainland
+  # IP. Failure, NODATA, and non-mainland IPs enter the foreign policy.
   - tag: cn_primary
     type: sequence
     args:
@@ -81,7 +92,7 @@ plugins:
           - '!rcode 0'
         exec: drop_resp
       - matches:
-          - qtype 1 28
+          - qtype 1
           - '!resp_ip $cn_ips'
         exec: drop_resp
 
@@ -89,23 +100,26 @@ plugins:
     type: fallback
     args:
       primary: cn_primary
-      secondary: secure_real_path
-      threshold: __FAST_FALLBACK_MS__
-      always_standby: true
+      # A known-CN name can still resolve outside CN. Route that result through
+      # the same Mihomo AUTO_FORWARD policy as every other non-CN answer.
+      secondary: foreign_path
+      threshold: 350
+      always_standby: false
 
   - tag: cn_path
     type: sequence
     args:
+      # Cache only the CN path. Final AUTO_FORWARD/fake-IP responses are never
+      # stored by GuardDNS, so an opened circuit takes effect immediately.
+      - exec: $cn_cache
       - exec: $cn_fallback
 
   - tag: main_sequence
     type: sequence
     args:
-      # The cache is a recursive executable: on a miss it runs the remainder
-      # of this sequence and stores the resulting response.
-      - exec: $main_cache
+      - exec: metrics_collector main
       - matches:
-          - __IPV6_BLOCK_MATCH__
+          - qtype 28
         exec: reject 0
       - matches:
           - qname $private_domains
@@ -129,17 +143,26 @@ plugins:
       # Unknown names fail closed to encrypted DNS.
       - exec: goto foreign_path
 
+  - tag: secure_listener_path
+    type: sequence
+    args:
+      - exec: metrics_collector secure
+      - matches:
+          - qtype 28
+        exec: reject 0
+      - exec: goto secure_real_path
+
   - tag: main_udp
     type: udp_server
     args:
       entry: main_sequence
-      listen: __LISTEN_ADDR__
+      listen: '0.0.0.0:53'
 
   - tag: main_tcp
     type: tcp_server
     args:
       entry: main_sequence
-      listen: __LISTEN_ADDR__
+      listen: '0.0.0.0:53'
       idle_timeout: 10
 
   # Port 5304 always returns a real answer. It is safe to use as Mihomo's
@@ -147,12 +170,12 @@ plugins:
   - tag: secure_udp
     type: udp_server
     args:
-      entry: secure_real_path
-      listen: __SECURE_LISTEN_ADDR__
+      entry: secure_listener_path
+      listen: '0.0.0.0:5304'
 
   - tag: secure_tcp
     type: tcp_server
     args:
-      entry: secure_real_path
-      listen: __SECURE_LISTEN_ADDR__
+      entry: secure_listener_path
+      listen: '0.0.0.0:5304'
       idle_timeout: 10

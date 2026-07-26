@@ -1,9 +1,10 @@
 plugins:
+  # Built-in encrypted real-IP resolver. It validates that the domain exists
+  # before AUTO_FORWARD is attempted and is also the outage fallback.
   - tag: forward_remote
     type: forward
     args:
       concurrent: 2
-__SOCKS5_LINE__
       upstreams:
         - tag: cloudflare
           addr: https://cloudflare-dns.com/dns-query
@@ -15,7 +16,7 @@ __SOCKS5_LINE__
   - tag: secure_cache
     type: cache
     args:
-      size: __SECURE_CACHE_SIZE__
+      size: 8192
       lazy_cache_ttl: 0
 
   - tag: secure_real_path
@@ -24,40 +25,63 @@ __SOCKS5_LINE__
       - exec: $secure_cache
       - exec: $forward_remote
 
-  - tag: forward_mihomo
+  - tag: forward_auto_raw
     type: forward
     args:
       upstreams:
-        - addr: __MIHOMO_DNS_ADDR__
+        - tag: auto_forward
+          addr: '__AUTO_FORWARD_ENDPOINT__'
+
+  - tag: auto_forward_circuit
+    type: guarddns_circuit
+    args:
+      primary: forward_auto_raw
+      failure_threshold: 2
+      initial_backoff_millis: 1000
+      max_backoff_millis: 300000
+      # SERVFAIL and REFUSED indicate that Mihomo's DNS service is not usable.
+      # NXDOMAIN/NODATA are name-specific answers and must not open the circuit.
+      failure_rcodes:
+        - 2
+        - 5
 
   - tag: fakeip_query
     type: sequence
     args:
       - exec: drop_resp
-      - exec: $forward_mihomo
+      - exec: $auto_forward_circuit
+      - matches:
+          - '!rcode 0'
+        exec: drop_resp
+      - matches:
+          - '!has_wanted_ans'
+        exec: drop_resp
 
-  # A/AAAA is sent to Mihomo only after encrypted DNS produced a successful,
-  # wanted answer. NXDOMAIN, SERVFAIL, and NODATA stay untouched.
-  - tag: foreign_primary
+  # The fallback plugin copies the current query context, including the
+  # validated real response. The standby branch therefore returns that same
+  # answer without repeating an encrypted lookup.
+  - tag: keep_real_response
+    type: sequence
+    args:
+      - exec: accept
+
+  - tag: auto_forward_fallback
+    type: fallback
+    args:
+      primary: fakeip_query
+      secondary: keep_real_response
+      threshold: 150
+      always_standby: false
+
+  # A is auto-forwarded only after encrypted DNS produced a successful, wanted
+  # answer. AAAA is rejected globally; NXDOMAIN, SERVFAIL, and NODATA stay
+  # untouched.
+  - tag: foreign_path
     type: sequence
     args:
       - exec: $secure_real_path
       - matches:
-          - qtype 1 28
+          - qtype 1
           - rcode 0
           - has_wanted_ans
-        exec: jump fakeip_query
-
-  # If Mihomo is unavailable, return the already validated real answer.
-  - tag: foreign_fallback
-    type: fallback
-    args:
-      primary: foreign_primary
-      secondary: secure_real_path
-      threshold: 900
-      always_standby: false
-
-  - tag: foreign_path
-    type: sequence
-    args:
-      - exec: $foreign_fallback
+        exec: $auto_forward_fallback
