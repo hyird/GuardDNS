@@ -68,12 +68,12 @@ func main() {
 		args: []string{"-d", "-c", unboundRecursiveRuntimeConfig},
 	}, state, log, &managers)
 
-	if err := waitForTCP(ctx, "127.0.0.1:5335", 3*time.Second); err != nil {
+	if err := waitForTCP(ctx, "127.0.0.1:5306", 3*time.Second); err != nil {
 		log.warnf("Unbound is not ready; starting MosDNS in degraded mode: %v", err)
 	}
 	// The CN classifier degrades to the encrypted path on its own, so a slow
 	// start here must not hold up the listeners.
-	if err := waitForTCP(ctx, "127.0.0.1:5337", 3*time.Second); err != nil {
+	if err := waitForTCP(ctx, "127.0.0.1:5305", 3*time.Second); err != nil {
 		log.warnf("CN classification resolver is not ready: %v", err)
 	}
 
@@ -91,7 +91,7 @@ func main() {
 	if err := waitForTCP(ctx, "127.0.0.1:53", 5*time.Second); err != nil {
 		log.warnf("MosDNS is not ready and will keep restarting: %v", err)
 	} else {
-		log.infof("ready mode=%s dns=:53 secure=:5304 metrics=:9091", mode)
+		log.infof("ready mode=%s dns=:53 secure=:5304 metrics=:5308", mode)
 	}
 
 	<-ctx.Done()

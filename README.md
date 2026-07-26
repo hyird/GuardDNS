@@ -58,7 +58,7 @@ docker run -d \
   -v ./data:/data \
   -p 53:53/udp -p 53:53/tcp \
   -p 5304:5304/udp -p 5304:5304/tcp \
-  -p 127.0.0.1:9091:9091/tcp \
+  -p 127.0.0.1:5308:5308/tcp \
   ghcr.io/hyird/guarddns:latest
 ```
 
@@ -72,7 +72,7 @@ docker run -d \
   -e AUTO_FORWARD=172.16.0.101 \
   -p 53:53/udp -p 53:53/tcp \
   -p 5304:5304/udp -p 5304:5304/tcp \
-  -p 127.0.0.1:9091:9091/tcp \
+  -p 127.0.0.1:5308:5308/tcp \
   ghcr.io/hyird/guarddns:latest
 ```
 
@@ -87,7 +87,7 @@ real answer through encrypted DNS, making it safe as Mihomo's upstream.
 | `AUTO_FORWARD` | `no` | `no` or Mihomo DNS `host[:port]`; the port defaults to `53` |
 
 Only these two operational choices are configurable. IPv6 is always disabled.
-Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:9091`;
+Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:5308`;
 the timezone is `Asia/Shanghai`, and the secure real-answer cache size is
 `8192`. Domain lists are fast paths. Any unclassified name is resolved once
 and its real A response is checked against the CN CIDR set; CN answers are
@@ -139,10 +139,22 @@ unhealthy.
 
 Supervisor state is sent to MosDNS through the Unix datagram socket
 `/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
-Private DNS data paths are loopback-only: MosDNS to Unbound on
-`127.0.0.1:5335`, Unbound to the in-process DoH bridge on `127.0.0.1:5336`, and
-MosDNS to the recursive CN classifier on `127.0.0.1:5337`. None is exposed by
-the image.
+The non-standard ports form one consecutive, role-ordered block:
+
+| Port | Scope | Role |
+| --- | --- | --- |
+| `5304` | Exposed DNS | Encrypted real-IP listener for Mihomo |
+| `5305` | Loopback only | Recursive CN classifier |
+| `5306` | Loopback only | Validating Unbound |
+| `5307` | Loopback only | In-process DoH bridge |
+| `5308` | HTTP | Health, metrics, and profiling |
+
+The normal classification path starts as `:53 -> :5305`. CN answers return
+there; NON-CN answers continue through `:5306 -> :5307`. Mihomo's real-IP
+queries enter at `:5304` and continue through `:5306 -> :5307`.
+
+Only `5304` and `5308` are exposed by the image. All private DNS hops remain
+bound to loopback.
 
 The classifier resolves in plaintext, since a delegation walk is what makes a
 mainland answer mainland. It is only ever asked whether a name is CN: its reply
@@ -152,10 +164,10 @@ reports `degraded` and mainland names fall back to the encrypted path, which
 resolves them correctly but from overseas.
 
 Prometheus metrics are available at `/metrics` on the fixed container listener
-`0.0.0.0:9091`. The Docker examples expose it only on host loopback:
+`0.0.0.0:5308`. The Docker examples expose it only on host loopback:
 
 ```text
-http://127.0.0.1:9091/metrics
+http://127.0.0.1:5308/metrics
 ```
 
 In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports

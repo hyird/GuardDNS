@@ -5,9 +5,9 @@ server:
   log-queries: no
   log-replies: no
 
-  interface: 127.0.0.1@5335
+  interface: 127.0.0.1@5306
   access-control: 127.0.0.0/8 allow
-  port: 5335
+  port: 5306
   username: unbound
   chroot: ""
   directory: "/run/guarddns/unbound"
@@ -78,4 +78,4 @@ remote-control:
 forward-zone:
   name: "."
   forward-first: no
-  forward-addr: 127.0.0.1@5336
+  forward-addr: 127.0.0.1@5307

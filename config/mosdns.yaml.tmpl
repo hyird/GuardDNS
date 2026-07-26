@@ -3,7 +3,7 @@ log:
   file: ''
 
 api:
-  http: '0.0.0.0:9091'
+  http: '0.0.0.0:5308'
 
 # The selected foreign-path fragment is loaded first. It owns the encrypted
 # upstream, the real-answer cache, and (optionally) the Mihomo validation gate.
@@ -69,7 +69,7 @@ plugins:
     args:
       upstreams:
         - tag: unbound
-          addr: 127.0.0.1:5335
+          addr: 127.0.0.1:5306
 
   # Recursive resolver. Asking it is what makes the CN CIDR test mean anything:
   # the delegation walk leaves from this network, so a mainland CDN answers with
@@ -79,7 +79,7 @@ plugins:
     args:
       upstreams:
         - tag: unbound_recursive
-          addr: 127.0.0.1:5337
+          addr: 127.0.0.1:5305
 
   - tag: recursive_lookup
     type: sequence

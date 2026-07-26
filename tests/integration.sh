@@ -155,7 +155,7 @@ docker exec "$dns_name" /usr/local/bin/guarddns-healthcheck \
   || fail "container health check failed"
 
 metrics=$(docker exec "$dns_name" \
-  wget -q -T 3 -O - http://127.0.0.1:9091/metrics)
+  wget -q -T 3 -O - http://127.0.0.1:5308/metrics)
 printf '%s\n' "$metrics" | grep -q 'mosdns_metrics_collector_query_total{name="main"}' \
   || fail "main listener metrics were not exported"
 printf '%s\n' "$metrics" | grep -q 'mosdns_metrics_collector_query_total{name="secure"}' \
@@ -168,7 +168,7 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_for
   || fail "AUTO_FORWARD circuit state was not exported"
 
 docker exec "$dns_name" sh -c \
-  "grep -q 'forward-addr: 127.0.0.1@5336' /run/guarddns/unbound.conf &&
+  "grep -q 'forward-addr: 127.0.0.1@5307' /run/guarddns/unbound.conf &&
    grep -q 'do-not-query-localhost: no' /run/guarddns/unbound.conf &&
    ! grep -R -E 'addr: https://|dial_addr:|forward-addr: (223\\.5\\.5\\.5|119\\.29\\.29\\.29)' /run/guarddns /etc/guarddns"
 
@@ -273,7 +273,7 @@ while [ "$i" -lt 15 ]; do
 done
 [ "$healthy" -eq 1 ] || fail "health endpoint did not recover after MosDNS restart"
 
-metrics=$(docker exec "$dns_name" wget -q -T 3 -O - http://127.0.0.1:9091/metrics)
+metrics=$(docker exec "$dns_name" wget -q -T 3 -O - http://127.0.0.1:5308/metrics)
 printf '%s\n' "$metrics" \
   | grep -Eq 'mosdns_guarddns_component_restarts_total\{component="unbound"\} [1-9][0-9]*' \
   || fail "Unbound restart count was not exported"

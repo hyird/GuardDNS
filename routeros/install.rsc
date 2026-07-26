@@ -21,8 +21,8 @@
 # Start the container only after the image extraction has completed.
 # /container/start [find where name=guarddns]
 # /ip/dns/set servers=172.16.0.100 allow-remote-requests=yes
-# Prometheus metrics: http://172.16.0.100:9091/metrics
-# Restrict access to port 9091 to trusted monitoring hosts.
+# Prometheus metrics: http://172.16.0.100:5308/metrics
+# Restrict access to port 5308 to trusted monitoring hosts.
 
 # Defense in depth: never expose the RouterOS recursive resolver on WAN.
 /ip/firewall/filter/add chain=input in-interface-list=WAN protocol=udp dst-port=53 action=drop comment="guarddns: block public UDP DNS"

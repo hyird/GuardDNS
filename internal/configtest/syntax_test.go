@@ -43,6 +43,38 @@ func TestConfigTemplatesDecode(t *testing.T) {
 	}
 }
 
+func TestNonStandardPortsFollowRequestHierarchy(t *testing.T) {
+	files := map[string][]string{
+		"mosdns.yaml.tmpl": {
+			"listen: '0.0.0.0:5304'",
+			"addr: 127.0.0.1:5305",
+			"addr: 127.0.0.1:5306",
+			"http: '0.0.0.0:5308'",
+		},
+		"unbound.conf.tmpl": {
+			"interface: 127.0.0.1@5306",
+			"forward-addr: 127.0.0.1@5307",
+		},
+		"unbound-recursive.conf.tmpl": {
+			"interface: 127.0.0.1@5305",
+		},
+	}
+	for name, required := range files {
+		t.Run(name, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("..", "..", "config", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := string(source)
+			for _, fragment := range required {
+				if !strings.Contains(config, fragment) {
+					t.Errorf("%s breaks the request-ordered 5304-5308 port layout: missing %q", name, fragment)
+				}
+			}
+		})
+	}
+}
+
 func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	for _, name := range []string{"foreign-secure.yaml", "foreign-mihomo.yaml.tmpl"} {
 		t.Run(name, func(t *testing.T) {
@@ -53,7 +85,7 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 			config := string(source)
 			for _, required := range []string{
 				"tag: secure_unbound",
-				"addr: 127.0.0.1:5335",
+				"addr: 127.0.0.1:5306",
 			} {
 				if !strings.Contains(config, required) {
 					t.Errorf("%s is missing %q", name, required)
@@ -80,7 +112,7 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 		`module-config: "validator iterator"`,
 		`auto-trust-anchor-file: "/run/guarddns/unbound/root.key"`,
 		"do-not-query-localhost: no",
-		"forward-addr: 127.0.0.1@5336",
+		"forward-addr: 127.0.0.1@5307",
 	} {
 		if !strings.Contains(config, required) {
 			t.Errorf("unbound.conf.tmpl is missing %q", required)
@@ -119,7 +151,7 @@ func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 	if !(discard < reresolve && reresolve < handoff) {
 		t.Error("cn_path can hand a client the plaintext classification answer")
 	}
-	if !strings.Contains(config, "addr: 127.0.0.1:5337") {
+	if !strings.Contains(config, "addr: 127.0.0.1:5305") {
 		t.Error("mosdns.yaml.tmpl does not reach the recursive CN resolver")
 	}
 	if strings.Contains(config, "# Unknown names fail closed to encrypted DNS.") {

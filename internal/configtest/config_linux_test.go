@@ -48,7 +48,7 @@ func TestRuntimeConfigsInitialize(t *testing.T) {
 				"/usr/share/guarddns/rules/proxy.txt", rules,
 				"/usr/share/guarddns/rules/direct.txt", rules,
 				"/usr/share/guarddns/rules/cncidr.txt", cidr,
-				"http: '0.0.0.0:9091'", "http: ''",
+				"http: '0.0.0.0:5308'", "http: ''",
 				"listen: '0.0.0.0:53'", "listen: '127.0.0.1:0'",
 				"listen: '0.0.0.0:5304'", "listen: '127.0.0.1:0'",
 			).Replace(mainConfig)

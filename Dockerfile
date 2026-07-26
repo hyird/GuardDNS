@@ -125,7 +125,7 @@ ENV AUTO_FORWARD=no \
     LOG_LEVEL=warn
 
 VOLUME ["/data"]
-EXPOSE 53/udp 53/tcp 5304/udp 5304/tcp 9091/tcp
+EXPOSE 53/udp 53/tcp 5304/udp 5304/tcp 5308/tcp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD ["/usr/local/bin/guarddns-healthcheck"]

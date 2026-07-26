@@ -18,7 +18,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const dohBridgeAddr = "127.0.0.1:5336"
+const dohBridgeAddr = "127.0.0.1:5307"
 
 type resolverFunc func(context.Context, *dns.Msg) (*dns.Msg, error)
 
