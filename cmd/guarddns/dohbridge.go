@@ -22,14 +22,23 @@ const dohBridgeAddr = "127.0.0.1:5336"
 
 type resolverFunc func(context.Context, *dns.Msg) (*dns.Msg, error)
 
+// Bootstrapped upstreams are dialed through Mihomo, so their dial addresses
+// are fake IPs. Those are stable while Mihomo runs but are reassigned when its
+// fake-IP pool is rebuilt, and a stale entry then points at another domain's
+// mapping. Cache them long enough to keep the bootstrap query off the hot dial
+// path, and discard them as soon as an exchange fails.
+const dialAddressTTL = time.Minute
+
 type dohUpstream struct {
-	tag         string
-	url         string
-	client      *http.Client
-	backoffMu   sync.Mutex
-	backoffStep uint
-	retryAt     time.Time
-	probing     bool
+	tag               string
+	url               string
+	client            *http.Client
+	invalidateDialIPs func()
+	backoffMu         sync.Mutex
+	backoffStep       uint
+	failures          uint
+	retryAt           time.Time
+	probing           bool
 }
 
 type dohBridge struct {
@@ -187,21 +196,65 @@ func probeDoHUpstream(ctx context.Context, upstream *dohUpstream) error {
 func newDoHUpstream(tag, url, serverName string, dialIPs []string) *dohUpstream {
 	return newDoHUpstreamWithResolver(tag, url, serverName, func(context.Context) ([]string, error) {
 		return dialIPs, nil
-	})
+	}, nil)
 }
 
 func newBootstrappedDoHUpstream(tag, url, serverName, bootstrapDNS string) *dohUpstream {
+	cache := new(dialAddressCache)
 	return newDoHUpstreamWithResolver(tag, url, serverName, func(ctx context.Context) ([]string, error) {
-		return resolveDoHAddresses(ctx, bootstrapDNS, serverName)
-	})
+		return cache.get(ctx, func(ctx context.Context) ([]string, error) {
+			return resolveDoHAddresses(ctx, bootstrapDNS, serverName)
+		})
+	}, cache.invalidate)
+}
+
+// dialAddressCache keeps the bootstrap lookup off the per-connection dial path.
+// Resolving it inline meant every cold dial spent up to a second on a UDP query
+// to Mihomo before the TCP connect and TLS handshake had even started, which no
+// realistic request deadline could absorb.
+type dialAddressCache struct {
+	mu        sync.Mutex
+	addresses []string
+	expiresAt time.Time
+}
+
+func (c *dialAddressCache) get(
+	ctx context.Context,
+	resolve func(context.Context) ([]string, error),
+) ([]string, error) {
+	c.mu.Lock()
+	if len(c.addresses) > 0 && time.Now().Before(c.expiresAt) {
+		cached := c.addresses
+		c.mu.Unlock()
+		return cached, nil
+	}
+	c.mu.Unlock()
+
+	addresses, err := resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.addresses = addresses
+	c.expiresAt = time.Now().Add(dialAddressTTL)
+	c.mu.Unlock()
+	return addresses, nil
+}
+
+func (c *dialAddressCache) invalidate() {
+	c.mu.Lock()
+	c.addresses = nil
+	c.expiresAt = time.Time{}
+	c.mu.Unlock()
 }
 
 func newDoHUpstreamWithResolver(
 	tag, url, serverName string,
 	resolveDialIPs func(context.Context) ([]string, error),
+	invalidateDialIPs func(),
 ) *dohUpstream {
 	var next atomic.Uint64
-	dialer := &net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{Timeout: 1500 * time.Millisecond, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		Proxy:               nil,
 		ForceAttemptHTTP2:   true,
@@ -225,11 +278,16 @@ func newDoHUpstreamWithResolver(
 		},
 	}
 	return &dohUpstream{
-		tag: tag,
-		url: url,
+		tag:               tag,
+		url:               url,
+		invalidateDialIPs: invalidateDialIPs,
 		client: &http.Client{
 			Transport: transport,
-			Timeout:   1200 * time.Millisecond,
+			// This budget covers the TCP connect and the TLS handshake, not
+			// just the request. A cold connection cannot complete inside the
+			// dialer's own timeout, so anything shorter fails every upstream
+			// whose idle connection has expired and pushes it into backoff.
+			Timeout: 3 * time.Second,
 		},
 	}
 }
@@ -267,12 +325,21 @@ func (u *dohUpstream) exchange(ctx context.Context, query *dns.Msg) (*dns.Msg, e
 	}
 	answer, err := u.exchangeOnce(ctx, query)
 	if err != nil {
+		if u.invalidateDialIPs != nil {
+			u.invalidateDialIPs()
+		}
 		u.fail(permit)
 		return nil, err
 	}
 	u.succeed()
 	return answer, nil
 }
+
+// dohFailureThreshold is the number of consecutive failures tolerated before an
+// upstream is parked. One timeout is normal on a congested link; parking the
+// preferred provider for minutes over it strands every query on the emergency
+// fallbacks, which are exactly the ones most likely to be polluted.
+const dohFailureThreshold = 2
 
 type dohPermit struct {
 	probe bool
@@ -295,6 +362,10 @@ func (u *dohUpstream) fail(permit dohPermit) {
 	u.backoffMu.Lock()
 	defer u.backoffMu.Unlock()
 	if u.backoffStep == 0 {
+		u.failures++
+		if u.failures < dohFailureThreshold {
+			return
+		}
 		u.backoffStep = 1
 	} else if permit.probe && u.probing {
 		u.backoffStep++
@@ -309,6 +380,7 @@ func (u *dohUpstream) succeed() {
 	u.backoffMu.Lock()
 	defer u.backoffMu.Unlock()
 	u.backoffStep = 0
+	u.failures = 0
 	u.retryAt = time.Time{}
 	u.probing = false
 }
