@@ -25,9 +25,10 @@ const (
 )
 
 type childSpec struct {
-	name string
-	path string
-	args []string
+	name                string
+	path                string
+	args                []string
+	suppressStartupInfo bool
 }
 
 func superviseChild(
@@ -45,7 +46,7 @@ func superviseChild(
 			return
 		}
 		cmd := exec.Command(spec.path, spec.args...)
-		deduper := newChildLogDeduper(spec.name)
+		deduper := newChildLogDeduper(spec.name, spec.suppressStartupInfo)
 		stdout := newChildLogWriter(deduper, os.Stdout)
 		stderr := newChildLogWriter(deduper, os.Stderr)
 		cmd.Stdout = stdout
@@ -173,19 +174,26 @@ const childLogDedupeWindow = 10 * time.Second
 var queryIDPattern = regexp.MustCompile(`"uqid":\s*([0-9]+)`)
 
 type childLogDeduper struct {
-	mu         sync.Mutex
-	child      string
-	boundaries map[string]time.Time
+	mu                  sync.Mutex
+	child               string
+	suppressStartupInfo bool
+	boundaries          map[string]time.Time
 }
 
-func newChildLogDeduper(child string) *childLogDeduper {
+func newChildLogDeduper(child string, suppressStartupInfo bool) *childLogDeduper {
 	return &childLogDeduper{
-		child:      child,
-		boundaries: make(map[string]time.Time),
+		child:               child,
+		suppressStartupInfo: suppressStartupInfo,
+		boundaries:          make(map[string]time.Time),
 	}
 }
 
 func (d *childLogDeduper) suppress(line string) bool {
+	if d.suppressStartupInfo &&
+		(d.child == "unbound" || d.child == "unbound_recursive") &&
+		strings.Contains(line, " info: start of service (unbound ") {
+		return true
+	}
 	if d.child != "mosdns" || !strings.Contains(line, "context deadline exceeded") {
 		return false
 	}

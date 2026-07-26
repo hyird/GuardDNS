@@ -54,18 +54,21 @@ func main() {
 	defer bridge.close()
 
 	var managers sync.WaitGroup
+	quietUnboundStartup := cfg.logLevel == "warn" || cfg.logLevel == "error"
 	managers.Add(1)
 	go superviseChild(ctx, childSpec{
-		name: "unbound",
-		path: "/usr/sbin/unbound",
-		args: []string{"-d", "-c", unboundRuntimeConfig},
+		name:                "unbound",
+		path:                "/usr/sbin/unbound",
+		args:                []string{"-d", "-c", unboundRuntimeConfig},
+		suppressStartupInfo: quietUnboundStartup,
 	}, state, log, &managers)
 
 	managers.Add(1)
 	go superviseChild(ctx, childSpec{
-		name: "unbound_recursive",
-		path: "/usr/sbin/unbound",
-		args: []string{"-d", "-c", unboundRecursiveRuntimeConfig},
+		name:                "unbound_recursive",
+		path:                "/usr/sbin/unbound",
+		args:                []string{"-d", "-c", unboundRecursiveRuntimeConfig},
+		suppressStartupInfo: quietUnboundStartup,
 	}, state, log, &managers)
 
 	if err := waitForTCP(ctx, "127.0.0.1:5306", 3*time.Second); err != nil {
