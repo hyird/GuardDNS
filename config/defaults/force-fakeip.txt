@@ -1,3 +1,0 @@
-# One rule per line. Examples:
-# domain:google.com
-# full:github.com

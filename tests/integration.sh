@@ -39,7 +39,7 @@ docker network create "$network" >/dev/null
 # first, so the list is exercised with a name that has no real answer at all.
 mkdir -p "$rule_overrides/data"
 printf 'full:fakeip-first.test\nfull:www.wikipedia.org\n' \
-  >"$rule_overrides/data/force-fakeip.txt"
+  >"$rule_overrides/data/overseas.txt"
 
 docker image inspect -f '{{json .Config.Healthcheck.Test}}' "$image" \
   | grep -q 'guarddns-healthcheck' \
@@ -107,18 +107,17 @@ global_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip
 printf '%s\n' "$global_answer" | grep -qx '198.18.0.42' \
   || fail "global domain did not use validated Mihomo fake-IP"
 
-# A name on the force-fakeip list goes straight to Mihomo, the way PaoPaoDNS
-# treats its force_forward_list. .test never resolves, so an answer here proves
-# no encrypted real lookup gated the fake IP.
+# A name on the overseas list goes straight to Mihomo. .test never resolves, so
+# an answer here proves no encrypted real lookup gated the fake IP.
 fakeip_first_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short "@$dns_ip" fakeip-first.test A)
 printf '%s\n' "$fakeip_first_answer" | grep -qx '198.18.0.42' \
-  || fail "force-fakeip domain did not reach Mihomo directly: $fakeip_first_answer"
+  || fail "overseas domain did not reach Mihomo directly: $fakeip_first_answer"
 
 control_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" dns.google A)
-[ -n "$control_answer" ] || fail "force-secure domain returned no A record"
+[ -n "$control_answer" ] || fail "real-IP domain returned no A record"
 printf '%s\n' "$control_answer" | grep -q '198\.18\.0\.42' \
-  && fail "force-secure domain leaked into fake-IP mode"
+  && fail "real-IP domain leaked into fake-IP mode"
 
 secure_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short -p 5304 "@$dns_ip" www.google.com A)
 [ -n "$secure_answer" ] || fail "secure listener returned no A record"
@@ -166,6 +165,11 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_component_up{component="doh_
   || fail "encrypted bridge state was not exported"
 printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_forward_circuit"}' \
   || fail "AUTO_FORWARD circuit state was not exported"
+for decision in real_ip overseas classified_domestic classified_overseas; do
+  printf '%s\n' "$metrics" \
+    | grep -q "mosdns_guarddns_decisions_total{decision=\"$decision\"}" \
+    || fail "domain mapping decision $decision was not exported"
+done
 
 docker exec "$dns_name" sh -c \
   "grep -q 'forward-addr: 127.0.0.1@5307' /run/guarddns/unbound.conf &&
@@ -181,14 +185,14 @@ cached_failover_answer=$(docker exec "$client_name" \
 [ -n "$cached_failover_answer" ] || fail "cached validation result was not reused"
 printf '%s\n' "$cached_failover_answer" | grep -q '198\.18\.0\.42' \
   && fail "GuardDNS cached a fake-IP response after AUTO_FORWARD stopped"
-# The force-fakeip path has no pre-resolved answer to reuse, so it must fall
+# The overseas path has no pre-resolved answer to reuse, so it must fall
 # back to encrypted real DNS on its own once Mihomo is gone.
 fakeip_first_failover=$(docker exec "$client_name" \
   dig +time=5 +tries=1 +short "@$dns_ip" www.wikipedia.org A)
 [ -n "$fakeip_first_failover" ] \
-  || fail "force-fakeip domain returned nothing after AUTO_FORWARD stopped"
+  || fail "overseas domain returned nothing after AUTO_FORWARD stopped"
 printf '%s\n' "$fakeip_first_failover" | grep -q '198\.18\.0\.42' \
-  && fail "force-fakeip domain returned a stale fake-IP after AUTO_FORWARD stopped"
+  && fail "overseas domain returned a stale fake-IP after AUTO_FORWARD stopped"
 
 failover_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short "@$dns_ip" www.youtube.com A)

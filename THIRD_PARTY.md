@@ -1,10 +1,12 @@
 # Third-party components
 
+[简体中文](THIRD_PARTY.zh-CN.md)
+
 The GuardDNS image contains third-party programs, libraries, and data:
 
 - [MosDNS](https://github.com/IrineSistiana/mosdns) v5.3.4, GPL-3.0. GuardDNS
-  builds a custom MosDNS entry binary that registers its supervision and
-  circuit-breaker plugins.
+  builds a custom entry binary that registers GuardDNS supervision,
+  circuit-breaker, decision-metrics, request-metrics, and TCP-server plugins.
 - [Unbound](https://github.com/NLnetLabs/unbound), BSD-3-Clause.
 - [Loyalsoldier v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat),
   GPL-3.0.

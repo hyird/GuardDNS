@@ -1,51 +1,53 @@
 # GuardDNS
 
-GuardDNS is a fail-closed anti-pollution split DNS container for RouterOS,
-Mihomo, and ordinary Docker hosts. It is designed as a smaller, auditable
-successor to monolithic DNS bundles.
+English | [简体中文](README.zh-CN.md)
 
-It combines:
+GuardDNS is a fail-closed split DNS container for RouterOS, Mihomo, and
+ordinary Docker hosts. It combines:
 
-- MosDNS 5.3.4 for routing, validation gates, and isolated caches.
-- Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
-  validation and caching.
-- A second Unbound instance that resolves recursively for CN classification,
-  because a mainland name is only recognisable when the question is asked from
-  the deployment's own network.
-- An in-process loopback bridge that prefers NextDNS and Quad9 DoH through
-  Mihomo, with direct Cloudflare and 360 DoH as emergency fallbacks.
-- Optional Mihomo DNS integration for validated fake-IP.
-- Functional Docker health checks and Prometheus runtime metrics.
+- MosDNS 5.3.4 for request routing, caches, metrics, and DNS listeners.
+- Two Unbound 1.25.1 instances: a local recursive CN classifier and a
+  DNSSEC-validating encrypted resolver.
+- An in-process DoH bridge with provider fallback and backoff.
+- Optional Mihomo DNS integration for fake-IP.
+- Independent child-process supervision and functional health checks.
 
-## Why it is stricter
+IPv6 answers are disabled. Runtime policy is controlled by two environment
+variables and three persistent domain lists. There is no Redis, and rule
+sources are not downloaded or refreshed at runtime.
 
-| Property | GuardDNS behavior |
-| --- | --- |
-| Unknown domains | Resolve once, accept CN IPs locally, and send validated NON-CN A answers to Mihomo when enabled |
-| Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in encrypted real IP otherwise and during outage |
-| Mainland DNS | Recursive Unbound decides CN membership; its answer is served only when the A records are CN, and is discarded otherwise |
-| Fake-IP | Classified-global names go straight to Mihomo; unknown names reach it only after their real answer proves NON-CN |
-| DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
-| Cache | Unbound and the secure-real path cache only real answers; fake-IP is never cached by GuardDNS |
-| Encrypted upstream | The Go bridge transports Unbound queries over DoH/443; Unbound validates DNSSEC locally |
-| Runtime state | No Redis and no runtime mutation of upstream rule files |
-| Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
-
-The routing policy is intentionally fail-closed:
+## Request flow
 
 ```text
-LAN -> RouterOS -> GuardDNS :53
-                     |
-                     +-- known global -> Mihomo fake-IP
-                     |                    \-- Mihomo unusable -> encrypted real IP
-                     |
-                     +-- unknown -> recursive lookup -> CN IP -> return it
-                                                      \-- otherwise -> discard,
-                                                          re-resolve encrypted
-                                                          -> optional fake-IP
+Client -> :53
+  -> rule fast path
+  -> otherwise :5305 recursive classification
+       -> CN address: return it
+       -> non-CN: discard it -> :5306 validation -> :5307 DoH
+                                      -> optional Mihomo fake-IP
 
-Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound -> DoH/443
+Mihomo real-DNS lookup -> :5304 -> :5306 -> :5307 -> DoH/443
 ```
+
+Requests are evaluated in this order:
+
+1. Reject AAAA and private names.
+2. Apply the real-IP mapping.
+3. Apply the overseas mapping.
+4. Apply the domestic mapping.
+5. Classify unknown names from their recursive A response using `cncidr.txt`.
+
+| Decision | Result |
+| --- | --- |
+| Real IP | Encrypted, DNSSEC-validated real address |
+| Overseas | Mihomo fake-IP when enabled; encrypted real address on failure or in secure-only mode |
+| Domestic | Trusted local recursive answer |
+| Unknown name | Recursive CN answer, or a discarded and re-resolved encrypted non-CN answer |
+| AAAA | Empty successful response |
+| Private name | `NXDOMAIN` |
+
+Fake-IP is never cached by GuardDNS. DNSSEC failures remain `SERVFAIL`;
+`NXDOMAIN` and NODATA are not converted to fake-IP.
 
 ## Quick start
 
@@ -76,137 +78,120 @@ docker run -d \
   ghcr.io/hyird/guarddns:latest
 ```
 
-Port `53` provides split DNS and optional fake-IP. Port `5304` always returns a
-real answer through encrypted DNS, making it safe as Mihomo's upstream.
+Port `53` is the client-facing split DNS listener. Port `5304` always returns
+an encrypted real address and is safe to use as Mihomo's real-DNS upstream.
+Port `5308` should be restricted to trusted monitoring hosts.
 
-## Environment variables
+The repository also provides [docker-compose.yml](docker-compose.yml) and a
+reviewable [RouterOS template](routeros/install.rsc).
+
+## Configuration
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LOG_LEVEL` | `warn` | `debug`, `info`, `warn`, or `error` |
 | `AUTO_FORWARD` | `no` | `no` or Mihomo DNS `host[:port]`; the port defaults to `53` |
 
-Only these two operational choices are configurable. IPv6 is always disabled.
-Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:5308`;
-the timezone is `Asia/Shanghai`, and the secure real-answer cache size is
-`8192`. Domain lists are fast paths. Any unclassified name is resolved once
-and its real A response is checked against the CN CIDR set; CN answers are
-returned directly and NON-CN answers enter the optional Mihomo path. This
-avoids racing a healthy but slower CN response against Mihomo's fake-IP
-response.
+`AUTO_FORWARD` accepts a hostname or IPv4 endpoint; IPv6 literals are not
+supported. GuardDNS uses TCP for this DNS hop.
 
-`AUTO_FORWARD` accepts `no`, a host/IPv4 address, or `host:port`. The DNS port
-defaults to `53` when omitted. Setting an address sends validated non-CN A
-queries to that Mihomo DNS service for fake-IP; SOCKS5 is not used. GuardDNS
-first verifies the domain with its built-in encrypted real-IP resolver. If
-Mihomo DNS fails, it reuses that same real answer without another lookup.
-Failures use exponential retry delays from `1s` to `5min`; while the circuit is
-open, queries bypass Mihomo immediately. A half-open probe restores forwarding
-automatically after recovery. Set it to `no` to use encrypted real IP only.
-The built-in real-IP path uses independent providers over authenticated
-DNS-over-HTTPS. When `AUTO_FORWARD` is enabled, GuardDNS asks that same Mihomo
-DNS endpoint for the provider's fake-IP and connects over HTTPS with the
-provider hostname still verified by TLS. This keeps global encrypted DNS on
-the Mihomo path without adding SOCKS5 or another setting. NextDNS is preferred,
-then Quad9; failures enter jittered exponential backoff and recover
-automatically. Direct Cloudflare and 360 DoH remain ordered emergency
-fallbacks. The Go process transports DNS wire messages between the
-loopback-only Unbound forwarder and the providers; Unbound validates DNSSEC
-locally before MosDNS may pass an A query to Mihomo. Provider hostname
-bootstrap queries use TCP to the Mihomo DNS endpoint, avoiding UDP loss during
-cold connection setup.
+When Mihomo is enabled:
 
-This intentionally keeps the central
-[PaoPaoDNS](https://github.com/kkkgo/PaoPaoDNS) behavior—real lookup, CN IP
-classification, then optional custom forwarding for NON-CN—while reducing its
-`CUSTOM_FORWARD` plus `AUTO_FORWARD=yes` pair to one
-`AUTO_FORWARD=host[:port]` setting. Redis, SOCKS5, runtime update switches, and
-IPv6 modes are omitted; the existing real response is reused for seamless
-fallback instead of being queried again.
+- overseas-mapped A queries go directly to Mihomo;
+- domestic-mapped queries use the local recursive resolver;
+- unknown names reach Mihomo only after their real response proves non-CN;
+- a validated unknown-name response is reused for fallback with a five-second
+  TTL;
+- an overseas-mapped name without a saved real response falls back to a new
+  encrypted lookup;
+- five consecutive failures open the circuit; each query has two 800 ms
+  attempts, and jittered retry delay is capped at 30 seconds;
+- a half-open probe restores forwarding automatically.
 
-Logs always go to the container's standard output/error stream and are never
-written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
-verbosity through the same setting.
+The encrypted path is `Unbound -> 127.0.0.1:5307 -> DoH/443`. Unbound performs
+DNSSEC validation locally. With Mihomo enabled, the DoH bridge prefers NextDNS
+and Quad9 through Mihomo, then falls back to direct Cloudflare and 360. Provider
+hostname bootstrap uses TCP to Mihomo. A DoH provider enters backoff after two
+consecutive failures, with a maximum delay of five minutes.
 
-## Health and metrics
+Logs go only to standard output/error. Expected downstream TCP disconnects are
+counted separately and do not produce warning noise or increment DNS
+`err_total`.
 
-The Go entrypoint independently supervises MosDNS and Unbound. If either child
-exits, it is restarted with jittered exponential delays from `1s` to `30s`;
-the container stays up and the other resolver continues serving what it can.
-The container health check verifies `/plugins/guarddns/readyz` and then
-performs a real A query through the secure `127.0.0.1:5304` listener. A
-restarting Unbound may report `degraded` but stays healthy while encrypted DNS
-still works; missing MosDNS, stale supervisor state, an unavailable DoH bridge,
-or an unusable secure DNS path reports unhealthy.
+## Ports
 
-The supervisor exposes separate operational layers:
+The non-standard ports are consecutive and ordered by request hierarchy:
 
-- `/plugins/guarddns/livez` checks fresh supervisor state and the MosDNS
-  process.
-- `/plugins/guarddns/readyz` adds the DoH bridge and resolver dependencies;
-  `/healthz` remains an alias for compatibility.
-- `/plugins/guarddns/dependencies` returns the component and per-provider DoH
-  state as JSON.
-
-Supervisor state is sent to MosDNS through the Unix datagram socket
-`/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
-The non-standard ports form one consecutive, role-ordered block:
-
-| Port | Scope | Role |
+| Port | Binding | Role |
 | --- | --- | --- |
-| `5304` | Exposed DNS | Encrypted real-IP listener for Mihomo |
-| `5305` | Loopback only | Recursive CN classifier |
-| `5306` | Loopback only | Validating Unbound |
-| `5307` | Loopback only | In-process DoH bridge |
-| `5308` | HTTP | Health, metrics, and profiling |
+| `53` | `0.0.0.0`, UDP/TCP | Client-facing split DNS |
+| `5304` | `0.0.0.0`, UDP/TCP | Encrypted real-IP listener for Mihomo |
+| `5305` | `127.0.0.1` | Recursive CN classifier |
+| `5306` | `127.0.0.1` | DNSSEC-validating Unbound |
+| `5307` | `127.0.0.1` | In-process DoH bridge |
+| `5308` | `0.0.0.0`, HTTP | Health, metrics, and profiling |
 
-The normal classification path starts as `:53 -> :5305`. CN answers return
-there; NON-CN answers continue through `:5306 -> :5307`. Mihomo's real-IP
-queries enter at `:5304` and continue through `:5306 -> :5307`.
+The image declares ports `53`, `5304`, and `5308`. Ports `5305`-`5307` remain
+inside the container. The examples bind `5308` to host loopback.
 
-Only `5304` and `5308` are exposed by the image. All private DNS hops remain
-bound to loopback.
+## Health
 
-The classifier resolves in plaintext, since a delegation walk is what makes a
-mainland answer mainland. It is only ever asked whether a name is CN: its reply
-is served when the addresses are CN and discarded otherwise, so a poisoned
-answer for a foreign name cannot reach a client. If it stops, the container
-reports `degraded` and mainland names fall back to the encrypted path, which
-resolves them correctly but from overseas.
+The Go entrypoint supervises MosDNS and both Unbound processes independently.
+A failed child restarts with a jittered delay capped at 30 seconds.
 
-Prometheus metrics are available at `/metrics` on the fixed container listener
-`0.0.0.0:5308`. The Docker examples expose it only on host loopback:
+| Endpoint | Meaning |
+| --- | --- |
+| `/plugins/guarddns/livez` | Supervisor state is fresh and MosDNS is running |
+| `/plugins/guarddns/readyz` | Adds the DoH bridge and resolver dependency state |
+| `/plugins/guarddns/healthz` | Compatibility alias for `readyz` |
+| `/plugins/guarddns/dependencies` | JSON snapshot of components and DoH providers |
+
+A failed validating or recursive Unbound reports `degraded`; a stale supervisor,
+stopped MosDNS, or unavailable DoH bridge reports unhealthy. The container
+health check calls `readyz` and then performs a real A query through
+`127.0.0.1:5304`, so HTTP state alone is not considered sufficient.
+
+## Metrics
+
+Prometheus metrics are available at:
 
 ```text
 http://127.0.0.1:5308/metrics
 ```
 
-In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports
-end-to-end counters and latency histograms with the collector names `main` and
-`secure`. MosDNS upstream metrics distinguish `unbound`, `unbound_secure`, and
-`auto_forward`. Expected TCP client disconnects have their own
-`mosdns_metrics_collector_canceled_total` and
-`mosdns_guarddns_client_cancel_events_total` counters; they do not increment
-DNS `err_total` or produce warning-log noise. Routing decisions are labeled in
-`mosdns_guarddns_decisions_total`. Supervisor metrics begin with
-`mosdns_guarddns_component_`; per-provider requests, success, failure, latency,
-and backoff begin with `mosdns_guarddns_doh_upstream_`; circuit state, retry
-delay, failures, and bypasses begin with `mosdns_guarddns_circuit_`.
+Key metric families:
 
-MosDNS also exposes profiling handlers under `/debug/pprof` on the same HTTP
-listener. Never publish this port to an untrusted network; restrict it with a
-host binding or firewall.
+| Family | Purpose |
+| --- | --- |
+| `mosdns_metrics_collector_*` | Main/secure query totals, real errors, client cancellations, concurrency, and latency |
+| `mosdns_guarddns_decisions_total` | Ordered routing and classification decisions |
+| `mosdns_guarddns_doh_upstream_*` | Per-provider requests, successes, failures, duration, backoff, and timestamps |
+| `mosdns_guarddns_component_*` | Supervised process state, restarts, and restart backoff |
+| `mosdns_guarddns_circuit_*` | Mihomo circuit state, failures, bypasses, and retry delay |
+| `mosdns_guarddns_client_cancel_events_total` | Expected TCP entry/write cancellations suppressed from warning logs |
+
+MosDNS also exports Go/process, cache, and tagged forward-upstream metrics.
+Profiling handlers are available under `/debug/pprof` on the same listener.
+Never expose port `5308` to an untrusted network.
 
 ## Custom rules
 
-The `/data` volume is initialized with:
+GuardDNS exposes three semantic domain mappings:
 
-- `force-secure.txt`: always return encrypted real IP, bypassing fake-IP.
-- `force-fakeip.txt`: force the global/fake-IP path.
-- `force-direct.txt`: force validating Unbound without geographic filtering.
+| Mapping | User-maintained file | Built-in base | Result |
+| --- | --- | --- | --- |
+| Real IP | `real-ip.txt` | None | Encrypted real address, bypassing fake-IP |
+| Overseas | `overseas.txt` | Pinned proxy rules | Mihomo fake-IP with encrypted real fallback |
+| Domestic | `domestic.txt` | Pinned direct rules | Trusted local recursive answer |
 
-Unbound's writable DNSSEC trust anchor is kept under
-`/run/guarddns/unbound`, not in the persistent rule volume.
+These three `/data` files contain domain rules only; IP addresses and CIDRs do
+not belong in them. On first startup after an upgrade, the legacy
+`force-secure.txt`, `force-fakeip.txt`, and `force-direct.txt` names are renamed
+automatically when their semantic replacement does not yet exist.
+
+The bundled proxy/direct rules and `cncidr.txt` are version-pinned internal
+data, not operator-maintained lists. `cncidr.txt` is an IP range database used
+only to classify unknown responses.
 
 Rules use MosDNS domain syntax:
 
@@ -217,21 +202,21 @@ keyword:example
 regexp:^api[0-9]+\.example\.com$
 ```
 
-Restart the container after editing rule files.
+Restart the container after editing rule files. The writable DNSSEC trust
+anchor is stored under `/run/guarddns/unbound`, not in `/data`.
 
 ## RouterOS and Mihomo
 
-For the existing `172.16.0.0/16` container bridge:
+The supplied RouterOS template assumes:
 
 - GuardDNS: `172.16.0.100`
 - Mihomo: `172.16.0.101`
-- RouterOS DNS server: `172.16.0.100`
+- container bridge: `172.16.0.0/16`
 
-A reviewable RouterOS template is provided at
-[`routeros/install.rsc`](routeros/install.rsc). Do not import it while another
-container still owns `172.16.0.100`.
+Review interface names, paths, addresses, and firewall placement before
+importing [routeros/install.rsc](routeros/install.rsc).
 
-Mihomo should use GuardDNS's secure listener for real upstream queries:
+Mihomo should use GuardDNS port `5304` for real-address queries:
 
 ```yaml
 dns:
@@ -245,45 +230,28 @@ dns:
     - 114.114.114.114
 ```
 
-`proxy-server-nameserver` must remain independent from GuardDNS so Mihomo can
-resolve proxy node hostnames during bootstrap. When Mihomo needs a real answer
-for an AUTO_FORWARD query, its `nameserver` uses GuardDNS port `5304`; that
-listener always uses built-in encrypted DNS and never forwards back to Mihomo,
-so the DNS path does not loop.
+Keep `proxy-server-nameserver` independent from GuardDNS so Mihomo can resolve
+proxy node hostnames during bootstrap. Add subscription and control-plane names
+to both `real-ip.txt` and Mihomo's `fake-ip-filter`.
 
-Add subscription/control-plane domains to `force-secure.txt` and Mihomo's
-`fake-ip-filter`, so they always receive real addresses.
+## Validation and publishing
 
-## Validation
-
-Local integration tests build a mock Mihomo DNS endpoint and verify:
-
-- mainland domains do not receive fake-IP;
-- global domains receive fake-IP only after encrypted validation;
-- port 5304 always returns real answers;
-- DNSSEC failures remain `SERVFAIL`;
-- NXDOMAIN is not converted to fake-IP;
-- NODATA is not converted to fake-IP;
-- secure real-IP mode and both UDP/TCP listeners start correctly;
-- IPv6 policy and environment input validation.
-- the functional secure-DNS health check and Prometheus listener metrics.
-- AUTO_FORWARD custom ports, seamless failure fallback, exponential backoff,
-  and half-open recovery.
-- independent MosDNS/Unbound crash recovery and restart metrics.
-
-Run:
+Run the integration suite with:
 
 ```sh
 docker build -t guarddns:test .
 sh tests/integration.sh guarddns:test
 ```
 
-GitHub Actions runs the same test before publishing multi-architecture
-`linux/amd64`, `linux/arm64`, and `linux/arm/v7` images to GHCR. Scheduled
-builds also pick up patched Alpine packages while rule snapshots remain pinned
-to reviewable upstream release/commit identifiers.
+The suite covers secure-only and Mihomo modes, UDP/TCP listeners, CN/non-CN
+classification, direct fake-IP fast paths, DNSSEC/NXDOMAIN/NODATA behavior,
+health, metrics, failover, circuit recovery, child restart, and environment
+validation.
 
-For restricted build networks, rule release assets may be placed in the ignored
-`.test-assets` directory. The Dockerfile still verifies their upstream
-checksums. MosDNS and the GuardDNS supervisor are reproducibly built from the
-pinned `go.mod`/`go.sum` module graph.
+GitHub Actions tests `linux/amd64`, smoke-tests `linux/arm64` and
+`linux/arm/v7`, and publishes a multi-architecture GHCR image with SBOM and
+provenance after successful non-PR runs. Rule archives and the Go module graph
+are checksum/version pinned.
+
+Third-party components and data licenses are listed in
+[THIRD_PARTY.md](THIRD_PARTY.md).

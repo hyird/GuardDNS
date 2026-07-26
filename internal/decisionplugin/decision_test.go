@@ -9,11 +9,11 @@ import (
 func TestDecisionCountersShareOneMetricVector(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	registerer := prometheus.WrapRegistererWithPrefix("mosdns_", registry)
-	cn, err := decisionCounter(registerer, "classifier_cn")
+	cn, err := decisionCounter(registerer, "classified_domestic")
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := decisionCounter(registerer, "classifier_non_cn")
+	foreign, err := decisionCounter(registerer, "classified_overseas")
 	if err != nil {
 		t.Fatal(err)
 	}

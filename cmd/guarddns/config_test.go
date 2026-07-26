@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -50,5 +53,62 @@ func TestLoadConfigUsesOneLogLevelForAllProcesses(t *testing.T) {
 				t.Fatalf("Unbound verbosity = %s, want %s", cfg.unboundLog, unbound)
 			}
 		})
+	}
+}
+
+func TestPrepareDomainListsMigratesLegacyNames(t *testing.T) {
+	dataPath := t.TempDir()
+	defaultsPath := t.TempDir()
+	expected := map[string]string{
+		"force-secure.txt": "real-ip.txt",
+		"force-fakeip.txt": "overseas.txt",
+		"force-direct.txt": "domestic.txt",
+	}
+	for legacy, current := range expected {
+		content := []byte("full:" + current + ".example\n")
+		if err := os.WriteFile(filepath.Join(dataPath, legacy), content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := prepareDomainLists(dataPath, defaultsPath); err != nil {
+		t.Fatal(err)
+	}
+	for legacy, current := range expected {
+		content, err := os.ReadFile(filepath.Join(dataPath, current))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedContent := "full:" + current + ".example\n"
+		if string(content) != expectedContent {
+			t.Fatalf("%s content = %q, want %q", current, content, expectedContent)
+		}
+		if _, err := os.Stat(filepath.Join(dataPath, legacy)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy list %s was not renamed", legacy)
+		}
+	}
+}
+
+func TestPrepareDomainListsCopiesSemanticDefaults(t *testing.T) {
+	dataPath := t.TempDir()
+	defaultsPath := t.TempDir()
+	for _, spec := range domainListSpecs {
+		content := []byte("full:" + spec.name + ".example\n")
+		if err := os.WriteFile(filepath.Join(defaultsPath, spec.name), content, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := prepareDomainLists(dataPath, defaultsPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range domainListSpecs {
+		content, err := os.ReadFile(filepath.Join(dataPath, spec.name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedContent := "full:" + spec.name + ".example\n"
+		if string(content) != expectedContent {
+			t.Fatalf("%s content = %q, want %q", spec.name, content, expectedContent)
+		}
 	}
 }

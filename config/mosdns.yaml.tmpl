@@ -18,23 +18,27 @@ plugins:
     args:
       socket: /run/guarddns/supervisor.sock
 
-  - tag: force_secure_domains
+  # Operators maintain exactly three semantic domain mappings. Version-pinned
+  # built-in rules extend the domestic and overseas sets internally.
+  - tag: real_ip_domains
     type: domain_set
     args:
       files:
-        - /data/force-secure.txt
+        - /data/real-ip.txt
 
-  - tag: force_fakeip_domains
+  - tag: overseas_domains
     type: domain_set
     args:
       files:
-        - /data/force-fakeip.txt
+        - /data/overseas.txt
+        - /usr/share/guarddns/rules/proxy.txt
 
-  - tag: force_direct_domains
+  - tag: domestic_domains
     type: domain_set
     args:
       files:
-        - /data/force-direct.txt
+        - /data/domestic.txt
+        - /usr/share/guarddns/rules/direct.txt
 
   - tag: private_domains
     type: domain_set
@@ -45,18 +49,6 @@ plugins:
         - lan
         - home.arpa
         - internal
-
-  - tag: global_domains
-    type: domain_set
-    args:
-      files:
-        - /usr/share/guarddns/rules/proxy.txt
-
-  - tag: cn_domains
-    type: domain_set
-    args:
-      files:
-        - /usr/share/guarddns/rules/direct.txt
 
   - tag: cn_ips
     type: ip_set
@@ -103,14 +95,15 @@ plugins:
       threshold: 2000
       always_standby: false
 
-  # force-direct.txt names are mainland by declaration, so they want the
-  # resolver that answers from here rather than from overseas.
-  - tag: direct_path
+  # Domestic-list names are trusted declarations and use the resolver that
+  # answers from this network. If it is down, classify_lookup still degrades to
+  # encrypted resolution.
+  - tag: domestic_path
     type: sequence
     args:
       - exec: $classify_lookup
 
-  - tag: cn_path
+  - tag: classify_path
     type: sequence
     args:
       # PaoPaoDNS-style classification, with its split between the resolver that
@@ -121,7 +114,7 @@ plugins:
           - rcode 0
           - has_wanted_ans
           - resp_ip $cn_ips
-        exec: guarddns_decision classifier_cn
+        exec: guarddns_decision classified_domestic
       - matches:
           - qtype 1
           - rcode 0
@@ -132,7 +125,7 @@ plugins:
       # answer. Plaintext recursion is poisoned for exactly the names that reach
       # this point, so discard it and let the encrypted, validating instance
       # decide what the client actually receives.
-      - exec: guarddns_decision classifier_non_cn
+      - exec: guarddns_decision classified_overseas
       - exec: drop_resp
       - exec: $forward_unbound
       - exec: goto validated_foreign_path
@@ -154,41 +147,28 @@ plugins:
           - qname $private_domains
         exec: reject 3
       - matches:
-          - qname $force_secure_domains
-        exec: guarddns_decision force_secure
+          - qname $real_ip_domains
+        exec: guarddns_decision real_ip
       - matches:
-          - qname $force_secure_domains
+          - qname $real_ip_domains
         exec: goto secure_real_path
       - matches:
-          - qname $force_fakeip_domains
-        exec: guarddns_decision force_fakeip
+          - qname $overseas_domains
+        exec: guarddns_decision overseas
       - matches:
-          - qname $force_fakeip_domains
+          - qname $overseas_domains
         exec: goto foreign_path
       - matches:
-          - qname $force_direct_domains
-        exec: guarddns_decision force_direct
+          - qname $domestic_domains
+        exec: guarddns_decision domestic
       - matches:
-          - qname $force_direct_domains
-        exec: goto direct_path
-      # Resolve overlaps on the safer encrypted/global path.
-      - matches:
-          - qname $global_domains
-        exec: guarddns_decision known_global
-      - matches:
-          - qname $global_domains
-        exec: goto foreign_path
-      - matches:
-          - qname $cn_domains
-        exec: guarddns_decision known_cn
-      - matches:
-          - qname $cn_domains
-        exec: goto cn_path
-      # Lists are fast paths, not the final classifier. Unknown names are
-      # resolved once and classified by the real response, matching the core
-      # PaoPaoDNS CN/NON-CN behavior.
+          - qname $domestic_domains
+        exec: goto domestic_path
+      # The three mappings are fast paths, not the final classifier. Unknown
+      # names are resolved once and classified by the real response, matching
+      # the core PaoPaoDNS CN/NON-CN behavior.
       - exec: guarddns_decision unknown
-      - exec: goto cn_path
+      - exec: goto classify_path
 
   - tag: secure_listener_path
     type: sequence

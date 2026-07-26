@@ -37,6 +37,17 @@ type config struct {
 	unboundLog     string
 }
 
+type domainListSpec struct {
+	name   string
+	legacy string
+}
+
+var domainListSpecs = []domainListSpec{
+	{name: "real-ip.txt", legacy: "force-secure.txt"},
+	{name: "overseas.txt", legacy: "force-fakeip.txt"},
+	{name: "domestic.txt", legacy: "force-direct.txt"},
+}
+
 func loadConfig() (config, error) {
 	cfg := config{
 		autoForwardRaw: envDefault("AUTO_FORWARD", "no"),
@@ -109,15 +120,8 @@ func prepareRuntime(cfg config) error {
 		}
 	}
 
-	for _, name := range []string{"force-secure.txt", "force-fakeip.txt", "force-direct.txt"} {
-		dst := filepath.Join(dataDir, name)
-		if _, err := os.Stat(dst); errors.Is(err, os.ErrNotExist) {
-			if err := copyFile(filepath.Join(configDir, "defaults", name), dst, 0644); err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		}
+	if err := prepareDomainLists(dataDir, filepath.Join(configDir, "defaults")); err != nil {
+		return err
 	}
 
 	rootKeySource := ""
@@ -192,6 +196,32 @@ func prepareRuntime(cfg config) error {
 			return fmt.Errorf(
 				"unbound config validation failed for %s: %w: %s",
 				config, err, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
+}
+
+func prepareDomainLists(dataPath, defaultsPath string) error {
+	for _, spec := range domainListSpecs {
+		dst := filepath.Join(dataPath, spec.name)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		legacy := filepath.Join(dataPath, spec.legacy)
+		if _, err := os.Stat(legacy); err == nil {
+			if err := os.Rename(legacy, dst); err != nil {
+				return fmt.Errorf("migrate %s to %s: %w", spec.legacy, spec.name, err)
+			}
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		if err := copyFile(filepath.Join(defaultsPath, spec.name), dst, 0644); err != nil {
+			return err
 		}
 	}
 	return nil

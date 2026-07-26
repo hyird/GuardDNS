@@ -1,3 +1,0 @@
-# Known mainland domains that should prefer validating Unbound.
-# One rule per line. Example:
-# domain:example.cn
