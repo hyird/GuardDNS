@@ -34,6 +34,7 @@ type dohUpstream struct {
 	url               string
 	client            *http.Client
 	invalidateDialIPs func()
+	observe           func(dohObservation, time.Duration, time.Time)
 	backoffMu         sync.Mutex
 	backoffStep       uint
 	failures          uint
@@ -60,7 +61,7 @@ func startDoHBridge(
 	bridge := &dohBridge{
 		log: log,
 	}
-	for _, upstream := range selectDoHUpstreams(ctx, cfg, log) {
+	for _, upstream := range selectDoHUpstreams(ctx, cfg, state, log) {
 		bridge.resolvers = append(bridge.resolvers, upstream.exchange)
 	}
 
@@ -100,9 +101,15 @@ func startDoHBridge(
 	return bridge, nil
 }
 
-func selectDoHUpstreams(ctx context.Context, cfg config, log *logger) []*dohUpstream {
+func selectDoHUpstreams(
+	ctx context.Context,
+	cfg config,
+	state *runtimeState,
+	log *logger,
+) []*dohUpstream {
 	upstreams := make([]*dohUpstream, 0, 4)
 	for _, upstream := range autoDoHUpstreams(cfg) {
+		attachDoHObservation(state, upstream)
 		if err := probeDoHUpstream(ctx, upstream); err != nil {
 			log.warnf(
 				"encrypted upstream %s is unavailable at startup; automatic retry remains enabled: %v",
@@ -114,7 +121,18 @@ func selectDoHUpstreams(ctx context.Context, cfg config, log *logger) []*dohUpst
 		}
 		upstreams = append(upstreams, upstream)
 	}
-	return append(upstreams, directDoHUpstreams()...)
+	for _, upstream := range directDoHUpstreams() {
+		attachDoHObservation(state, upstream)
+		upstreams = append(upstreams, upstream)
+	}
+	return upstreams
+}
+
+func attachDoHObservation(state *runtimeState, upstream *dohUpstream) {
+	state.registerDoHUpstream(upstream.tag)
+	upstream.observe = func(result dohObservation, duration time.Duration, retryAt time.Time) {
+		state.observeDoHUpstream(upstream.tag, result, duration, retryAt)
+	}
 }
 
 func autoDoHUpstreams(cfg config) []*dohUpstream {
@@ -209,9 +227,9 @@ func newBootstrappedDoHUpstream(tag, url, serverName, bootstrapDNS string) *dohU
 }
 
 // dialAddressCache keeps the bootstrap lookup off the per-connection dial path.
-// Resolving it inline meant every cold dial spent up to a second on a UDP query
-// to Mihomo before the TCP connect and TLS handshake had even started, which no
-// realistic request deadline could absorb.
+// Resolving it inline meant every cold dial spent up to a second on a bootstrap
+// query to Mihomo before the TCP connect and TLS handshake had even started,
+// which no realistic request deadline could absorb.
 type dialAddressCache struct {
 	mu        sync.Mutex
 	addresses []string
@@ -296,7 +314,7 @@ func resolveDoHAddresses(ctx context.Context, bootstrapDNS, serverName string) (
 	query := new(dns.Msg)
 	query.SetQuestion(dns.Fqdn(serverName), dns.TypeA)
 	client := &dns.Client{
-		Net:     "udp",
+		Net:     "tcp",
 		Timeout: time.Second,
 	}
 	response, _, err := client.ExchangeContext(ctx, query, bootstrapDNS)
@@ -319,8 +337,10 @@ func resolveDoHAddresses(ctx context.Context, bootstrapDNS, serverName string) (
 }
 
 func (u *dohUpstream) exchange(ctx context.Context, query *dns.Msg) (*dns.Msg, error) {
+	startedAt := time.Now()
 	permit, allowed := u.acquire()
 	if !allowed {
+		u.record(dohBackoffSkip, time.Since(startedAt))
 		return nil, fmt.Errorf("%s retry is in exponential backoff", u.tag)
 	}
 	answer, err := u.exchangeOnce(ctx, query)
@@ -329,10 +349,22 @@ func (u *dohUpstream) exchange(ctx context.Context, query *dns.Msg) (*dns.Msg, e
 			u.invalidateDialIPs()
 		}
 		u.fail(permit)
+		u.record(dohFailure, time.Since(startedAt))
 		return nil, err
 	}
 	u.succeed()
+	u.record(dohSuccess, time.Since(startedAt))
 	return answer, nil
+}
+
+func (u *dohUpstream) record(result dohObservation, duration time.Duration) {
+	if u.observe == nil {
+		return
+	}
+	u.backoffMu.Lock()
+	retryAt := u.retryAt
+	u.backoffMu.Unlock()
+	u.observe(result, duration, retryAt)
 }
 
 // dohFailureThreshold is the number of consecutive failures tolerated before an

@@ -120,6 +120,53 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	}
 }
 
+func TestObservabilityPluginsAreWiredIntoEveryRuntimeMode(t *testing.T) {
+	mainSource, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainConfig := string(mainSource)
+	for _, required := range []string{
+		"exec: guarddns_metrics_collector main",
+		"exec: guarddns_metrics_collector secure",
+		"type: guarddns_tcp_server",
+		"exec: guarddns_decision classifier_cn",
+		"exec: guarddns_decision classifier_non_cn",
+		"exec: guarddns_decision unknown",
+	} {
+		if !strings.Contains(mainConfig, required) {
+			t.Errorf("mosdns.yaml.tmpl is missing %q", required)
+		}
+	}
+	if strings.Contains(mainConfig, "exec: metrics_collector ") {
+		t.Error("the upstream collector still counts expected client cancellations as errors")
+	}
+
+	for name, decisions := range map[string][]string{
+		"foreign-secure.yaml": {
+			"guarddns_decision secure_non_cn",
+			"guarddns_decision secure_foreign",
+		},
+		"foreign-mihomo.yaml.tmpl": {
+			"guarddns_decision fakeip_attempt",
+			"guarddns_decision fakeip_answer",
+			"guarddns_decision fallback_reuse_real",
+			"guarddns_decision fallback_secure_lookup",
+		},
+	} {
+		source, err := os.ReadFile(filepath.Join("..", "..", "config", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := string(source)
+		for _, decision := range decisions {
+			if !strings.Contains(config, decision) {
+				t.Errorf("%s is missing %q", name, decision)
+			}
+		}
+	}
+}
+
 func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
 	if err != nil {

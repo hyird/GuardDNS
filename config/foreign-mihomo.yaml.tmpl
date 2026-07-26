@@ -59,6 +59,7 @@ plugins:
   - tag: fakeip_query
     type: sequence
     args:
+      - exec: guarddns_decision fakeip_attempt
       - exec: drop_resp
       - exec: $auto_forward_circuit
       - matches:
@@ -67,6 +68,11 @@ plugins:
       - matches:
           - '!has_wanted_ans'
         exec: drop_resp
+      - matches:
+          - qtype 1
+          - rcode 0
+          - has_wanted_ans
+        exec: guarddns_decision fakeip_answer
 
   # The fallback plugin copies the current query context, including the
   # validated real response. The standby branch therefore returns that same
@@ -81,6 +87,7 @@ plugins:
   - tag: keep_real_response
     type: sequence
     args:
+      - exec: guarddns_decision fallback_reuse_real
       - exec: ttl 5
       - exec: accept
 
@@ -105,6 +112,11 @@ plugins:
           - qtype 1
           - rcode 0
           - has_wanted_ans
+        exec: guarddns_decision validated_foreign
+      - matches:
+          - qtype 1
+          - rcode 0
+          - has_wanted_ans
         exec: $auto_forward_fallback
 
   # A name that is already classified as global does not need a real answer
@@ -116,6 +128,7 @@ plugins:
   - tag: encrypted_real_standby
     type: sequence
     args:
+      - exec: guarddns_decision fallback_secure_lookup
       - exec: drop_resp
       - exec: $secure_real_path
 

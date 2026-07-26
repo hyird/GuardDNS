@@ -112,7 +112,9 @@ then Quad9; failures enter jittered exponential backoff and recover
 automatically. Direct Cloudflare and 360 DoH remain ordered emergency
 fallbacks. The Go process transports DNS wire messages between the
 loopback-only Unbound forwarder and the providers; Unbound validates DNSSEC
-locally before MosDNS may pass an A query to Mihomo.
+locally before MosDNS may pass an A query to Mihomo. Provider hostname
+bootstrap queries use TCP to the Mihomo DNS endpoint, avoiding UDP loss during
+cold connection setup.
 
 This intentionally keeps the central
 [PaoPaoDNS](https://github.com/kkkgo/PaoPaoDNS) behavior—real lookup, CN IP
@@ -131,11 +133,20 @@ verbosity through the same setting.
 The Go entrypoint independently supervises MosDNS and Unbound. If either child
 exits, it is restarted with jittered exponential delays from `1s` to `30s`;
 the container stays up and the other resolver continues serving what it can.
-The health check verifies `/plugins/guarddns/healthz` and performs a real A
-query through the secure `127.0.0.1:5304` listener. A restarting Unbound may
-report `degraded` but stays healthy while encrypted DNS still works; missing
-MosDNS, stale supervisor state, or an unusable secure DNS path reports
-unhealthy.
+The container health check verifies `/plugins/guarddns/readyz` and then
+performs a real A query through the secure `127.0.0.1:5304` listener. A
+restarting Unbound may report `degraded` but stays healthy while encrypted DNS
+still works; missing MosDNS, stale supervisor state, an unavailable DoH bridge,
+or an unusable secure DNS path reports unhealthy.
+
+The supervisor exposes separate operational layers:
+
+- `/plugins/guarddns/livez` checks fresh supervisor state and the MosDNS
+  process.
+- `/plugins/guarddns/readyz` adds the DoH bridge and resolver dependencies;
+  `/healthz` remains an alias for compatibility.
+- `/plugins/guarddns/dependencies` returns the component and per-provider DoH
+  state as JSON.
 
 Supervisor state is sent to MosDNS through the Unix datagram socket
 `/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
@@ -173,9 +184,14 @@ http://127.0.0.1:5308/metrics
 In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports
 end-to-end counters and latency histograms with the collector names `main` and
 `secure`. MosDNS upstream metrics distinguish `unbound`, `unbound_secure`, and
-`auto_forward`. Supervisor metrics
-begin with `mosdns_guarddns_component_`; circuit state, retry delay, failures,
-and bypasses begin with `mosdns_guarddns_circuit_`.
+`auto_forward`. Expected TCP client disconnects have their own
+`mosdns_metrics_collector_canceled_total` and
+`mosdns_guarddns_client_cancel_events_total` counters; they do not increment
+DNS `err_total` or produce warning-log noise. Routing decisions are labeled in
+`mosdns_guarddns_decisions_total`. Supervisor metrics begin with
+`mosdns_guarddns_component_`; per-provider requests, success, failure, latency,
+and backoff begin with `mosdns_guarddns_doh_upstream_`; circuit state, retry
+delay, failures, and bypasses begin with `mosdns_guarddns_circuit_`.
 
 MosDNS also exposes profiling handlers under `/debug/pprof` on the same HTTP
 listener. Never publish this port to an untrusted network; restrict it with a

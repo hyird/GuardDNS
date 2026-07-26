@@ -92,12 +92,12 @@ func TestDoHBridgeUsesUpstreamsInOrder(t *testing.T) {
 }
 
 func TestResolveDoHAddressesUsesConfiguredDNS(t *testing.T) {
-	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := &dns.Server{
-		PacketConn: conn,
+		Listener: listener,
 		Handler: dns.HandlerFunc(func(writer dns.ResponseWriter, request *dns.Msg) {
 			response := new(dns.Msg)
 			response.SetReply(request)
@@ -126,7 +126,7 @@ func TestResolveDoHAddressesUsesConfiguredDNS(t *testing.T) {
 		}
 	})
 
-	addresses, err := resolveDoHAddresses(context.Background(), conn.LocalAddr().String(), "dns.example")
+	addresses, err := resolveDoHAddresses(context.Background(), listener.Addr().String(), "dns.example")
 	if err != nil {
 		t.Fatal(err)
 	}
