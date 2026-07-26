@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,8 +45,11 @@ func superviseChild(
 			return
 		}
 		cmd := exec.Command(spec.path, spec.args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		deduper := newChildLogDeduper(spec.name)
+		stdout := newChildLogWriter(deduper, os.Stdout)
+		stderr := newChildLogWriter(deduper, os.Stderr)
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
 		configureProcess(cmd)
 		startedAt := time.Now()
 		if err := cmd.Start(); err != nil {
@@ -58,7 +65,16 @@ func superviseChild(
 			log.infof("%s started pid=%d", spec.name, cmd.Process.Pid)
 
 			waited := make(chan error, 1)
-			go func() { waited <- cmd.Wait() }()
+			go func() {
+				err := cmd.Wait()
+				if flushErr := stdout.Flush(); err == nil {
+					err = flushErr
+				}
+				if flushErr := stderr.Flush(); err == nil {
+					err = flushErr
+				}
+				waited <- err
+			}()
 			select {
 			case err := <-waited:
 				state.update(spec.name, func(component *statewire.Component) {
@@ -102,6 +118,105 @@ func superviseChild(
 		case <-timer.C:
 		}
 	}
+}
+
+type childLogWriter struct {
+	mu      sync.Mutex
+	deduper *childLogDeduper
+	dst     io.Writer
+	pending []byte
+}
+
+func newChildLogWriter(deduper *childLogDeduper, dst io.Writer) *childLogWriter {
+	return &childLogWriter{deduper: deduper, dst: dst}
+}
+
+func (w *childLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	accepted := len(p)
+	w.pending = append(w.pending, p...)
+	for {
+		end := bytes.IndexByte(w.pending, '\n')
+		if end < 0 {
+			return accepted, nil
+		}
+		line := append([]byte(nil), w.pending[:end+1]...)
+		w.pending = w.pending[end+1:]
+		if w.deduper.suppress(string(line)) {
+			continue
+		}
+		if _, err := w.dst.Write(line); err != nil {
+			return accepted, err
+		}
+	}
+}
+
+func (w *childLogWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) == 0 {
+		return nil
+	}
+	line := w.pending
+	w.pending = nil
+	if w.deduper.suppress(string(line)) {
+		return nil
+	}
+	_, err := w.dst.Write(line)
+	return err
+}
+
+const childLogDedupeWindow = 10 * time.Second
+
+var queryIDPattern = regexp.MustCompile(`"uqid":\s*([0-9]+)`)
+
+type childLogDeduper struct {
+	mu         sync.Mutex
+	child      string
+	boundaries map[string]time.Time
+}
+
+func newChildLogDeduper(child string) *childLogDeduper {
+	return &childLogDeduper{
+		child:      child,
+		boundaries: make(map[string]time.Time),
+	}
+}
+
+func (d *childLogDeduper) suppress(line string) bool {
+	if d.child != "mosdns" || !strings.Contains(line, "context deadline exceeded") {
+		return false
+	}
+	match := queryIDPattern.FindStringSubmatch(line)
+	if len(match) != 2 {
+		return false
+	}
+
+	now := time.Now()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for queryID, recordedAt := range d.boundaries {
+		if now.Sub(recordedAt) > childLogDedupeWindow {
+			delete(d.boundaries, queryID)
+		}
+	}
+
+	queryID := match[1]
+	if strings.Contains(line, "\tmain_tcp\tentry err\t") ||
+		strings.Contains(line, "\tmain_udp\tentry err\t") {
+		d.boundaries[queryID] = now
+		return false
+	}
+	internal := strings.Contains(line, "\tclassify_lookup\tsecondary error\t") ||
+		strings.Contains(line, "\tforward_unbound\tupstream error\t") ||
+		strings.Contains(line, "\trecursive_unbound\tupstream error\t")
+	if !internal {
+		return false
+	}
+	recordedAt, ok := d.boundaries[queryID]
+	return ok && now.Sub(recordedAt) <= childLogDedupeWindow
 }
 
 func restartDelay(step uint) time.Duration {

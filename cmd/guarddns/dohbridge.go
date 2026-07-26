@@ -111,7 +111,10 @@ func selectDoHUpstreams(
 	for _, upstream := range autoDoHUpstreams(cfg) {
 		attachDoHObservation(state, upstream)
 		if err := probeDoHUpstream(ctx, upstream); err != nil {
-			log.warnf(
+			// A failed startup probe is recoverable and is already exported
+			// through the provider metrics. Runtime exhaustion still produces
+			// a rate-limited warning from warnUnavailable.
+			log.infof(
 				"encrypted upstream %s is unavailable at startup; automatic retry remains enabled: %v",
 				upstream.tag,
 				err,

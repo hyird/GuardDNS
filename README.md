@@ -116,7 +116,12 @@ consecutive failures, with a maximum delay of five minutes.
 
 Logs go only to standard output/error. Expected downstream TCP disconnects are
 counted separately and do not produce warning noise or increment DNS
-`err_total`.
+`err_total`. At `warn`, Unbound emits only errors, recoverable DoH startup
+probes remain available through provider metrics, and internal deadline
+warnings are suppressed only after the same query was reported at the request
+boundary.
+Component exits, circuit changes, exhausted DNS providers, and client-visible
+request failures remain actionable warnings.
 
 ## Ports
 

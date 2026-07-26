@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/IrineSistiana/mosdns/v5/coremain"
 	"github.com/IrineSistiana/mosdns/v5/mlog"
@@ -13,6 +14,7 @@ import (
 	_ "github.com/hyird/GuardDNS/internal/supervisorplugin"
 	_ "github.com/hyird/GuardDNS/internal/tcpserverplugin"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap/zapcore"
 )
 
 var version = "v5.3.4-guarddns"
@@ -28,7 +30,22 @@ func init() {
 }
 
 func main() {
+	// coremain logs once before it loads mosdns.yaml. Configure that bootstrap
+	// logger from the same environment as the rendered runtime configuration so
+	// warn/error deployments do not leak an informational startup line.
+	mlog.SetLevel(bootstrapLogLevel(os.Getenv("LOG_LEVEL")))
 	if err := coremain.Run(); err != nil {
 		mlog.S().Fatal(err)
 	}
+}
+
+func bootstrapLogLevel(raw string) zapcore.Level {
+	if raw == "" {
+		raw = "warn"
+	}
+	level, err := zapcore.ParseLevel(raw)
+	if err != nil {
+		return zapcore.WarnLevel
+	}
+	return level
 }

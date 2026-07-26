@@ -38,7 +38,7 @@ func TestLoadConfigUsesOneLogLevelForAllProcesses(t *testing.T) {
 	tests := map[string]string{
 		"debug": "3",
 		"info":  "2",
-		"warn":  "1",
+		"warn":  "0",
 		"error": "0",
 	}
 	for level, unbound := range tests {

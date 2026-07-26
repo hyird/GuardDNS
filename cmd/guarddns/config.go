@@ -59,7 +59,10 @@ func loadConfig() (config, error) {
 	case "info":
 		cfg.unboundLog = "2"
 	case "warn":
-		cfg.unboundLog = "1"
+		// Unbound verbosity 1 emits operational startup notices rather than
+		// warnings. Keep warn mode aligned with its name and reserve those
+		// notices for info/debug runs.
+		cfg.unboundLog = "0"
 	case "error":
 		cfg.unboundLog = "0"
 	default:

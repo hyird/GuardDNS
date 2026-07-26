@@ -6,7 +6,24 @@ import (
 	"github.com/IrineSistiana/mosdns/v5/coremain"
 	"github.com/IrineSistiana/mosdns/v5/plugin/executable/sequence"
 	"github.com/IrineSistiana/mosdns/v5/plugin/server/tcp_server"
+	"go.uber.org/zap/zapcore"
 )
+
+func TestBootstrapLogLevelMatchesRuntimeDefault(t *testing.T) {
+	tests := map[string]zapcore.Level{
+		"":        zapcore.WarnLevel,
+		"debug":   zapcore.DebugLevel,
+		"info":    zapcore.InfoLevel,
+		"warn":    zapcore.WarnLevel,
+		"error":   zapcore.ErrorLevel,
+		"invalid": zapcore.WarnLevel,
+	}
+	for raw, want := range tests {
+		if got := bootstrapLogLevel(raw); got != want {
+			t.Fatalf("bootstrapLogLevel(%q) = %s, want %s", raw, got, want)
+		}
+	}
+}
 
 func TestGuardDNSPluginsInitializeTogether(t *testing.T) {
 	entry := sequence.Args{
