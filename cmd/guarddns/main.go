@@ -61,8 +61,20 @@ func main() {
 		args: []string{"-d", "-c", unboundRuntimeConfig},
 	}, state, log, &managers)
 
+	managers.Add(1)
+	go superviseChild(ctx, childSpec{
+		name: "unbound_recursive",
+		path: "/usr/sbin/unbound",
+		args: []string{"-d", "-c", unboundRecursiveRuntimeConfig},
+	}, state, log, &managers)
+
 	if err := waitForTCP(ctx, "127.0.0.1:5335", 3*time.Second); err != nil {
 		log.warnf("Unbound is not ready; starting MosDNS in degraded mode: %v", err)
+	}
+	// The CN classifier degrades to the encrypted path on its own, so a slow
+	// start here must not hold up the listeners.
+	if err := waitForTCP(ctx, "127.0.0.1:5337", 3*time.Second); err != nil {
+		log.warnf("CN classification resolver is not ready: %v", err)
 	}
 
 	managers.Add(1)

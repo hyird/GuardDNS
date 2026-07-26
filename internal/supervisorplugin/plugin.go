@@ -110,6 +110,13 @@ func (p *Plugin) health(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("degraded: unbound is restarting\n"))
 		return
 	}
+	// Losing the CN classifier costs mainland names their local answer, not
+	// their resolution: they fall through to the encrypted path.
+	if cn, ok := snapshot.Components["unbound_recursive"]; ok && cn.Enabled && !cn.Up {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("degraded: CN classification resolver is restarting\n"))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
 }

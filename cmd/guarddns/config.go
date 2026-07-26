@@ -15,14 +15,16 @@ import (
 )
 
 const (
-	runtimeDir           = "/run/guarddns"
-	unboundRuntimeDir    = "/run/guarddns/unbound"
-	configDir            = "/etc/guarddns"
-	dataDir              = "/data"
-	supervisorSocket     = "/run/guarddns/supervisor.sock"
-	mosdnsRuntimeConfig  = "/run/guarddns/mosdns.yaml"
-	foreignRuntimeConfig = "/run/guarddns/foreign.yaml"
-	unboundRuntimeConfig = "/run/guarddns/unbound.conf"
+	runtimeDir                    = "/run/guarddns"
+	unboundRuntimeDir             = "/run/guarddns/unbound"
+	unboundRecursiveRuntimeDir    = "/run/guarddns/unbound-recursive"
+	configDir                     = "/etc/guarddns"
+	dataDir                       = "/data"
+	supervisorSocket              = "/run/guarddns/supervisor.sock"
+	mosdnsRuntimeConfig           = "/run/guarddns/mosdns.yaml"
+	foreignRuntimeConfig          = "/run/guarddns/foreign.yaml"
+	unboundRuntimeConfig          = "/run/guarddns/unbound.conf"
+	unboundRecursiveRuntimeConfig = "/run/guarddns/unbound-recursive.conf"
 )
 
 var safeHost = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -99,7 +101,9 @@ func parseForwardEndpoint(value string) (host, port string, err error) {
 }
 
 func prepareRuntime(cfg config) error {
-	for _, dir := range []string{runtimeDir, unboundRuntimeDir, dataDir} {
+	for _, dir := range []string{
+		runtimeDir, unboundRuntimeDir, unboundRecursiveRuntimeDir, dataDir,
+	} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
@@ -134,7 +138,7 @@ func prepareRuntime(cfg config) error {
 	if err := copyFile(rootKeySource, rootKey, 0644); err != nil {
 		return err
 	}
-	if err := chownUnbound(unboundRuntimeDir, rootKey); err != nil {
+	if err := chownUnbound(unboundRuntimeDir, rootKey, unboundRecursiveRuntimeDir); err != nil {
 		return err
 	}
 
@@ -144,6 +148,15 @@ func prepareRuntime(cfg config) error {
 	}
 	unboundConfig := strings.ReplaceAll(string(unboundTemplate), "__UNBOUND_VERBOSITY__", cfg.unboundLog)
 	if err := writeRendered(unboundRuntimeConfig, unboundConfig); err != nil {
+		return err
+	}
+	recursiveTemplate, err := os.ReadFile(filepath.Join(configDir, "unbound-recursive.conf.tmpl"))
+	if err != nil {
+		return err
+	}
+	recursiveConfig := strings.ReplaceAll(
+		string(recursiveTemplate), "__UNBOUND_VERBOSITY__", cfg.unboundLog)
+	if err := writeRendered(unboundRecursiveRuntimeConfig, recursiveConfig); err != nil {
 		return err
 	}
 	mainTemplate, err := os.ReadFile(filepath.Join(configDir, "mosdns.yaml.tmpl"))
@@ -172,9 +185,14 @@ func prepareRuntime(cfg config) error {
 	}
 
 	_ = os.Remove(filepath.Join(unboundRuntimeDir, "unbound.pid"))
-	check := exec.Command("unbound-checkconf", unboundRuntimeConfig)
-	if output, err := check.CombinedOutput(); err != nil {
-		return fmt.Errorf("unbound config validation failed: %w: %s", err, strings.TrimSpace(string(output)))
+	_ = os.Remove(filepath.Join(unboundRecursiveRuntimeDir, "unbound.pid"))
+	for _, config := range []string{unboundRuntimeConfig, unboundRecursiveRuntimeConfig} {
+		check := exec.Command("unbound-checkconf", config)
+		if output, err := check.CombinedOutput(); err != nil {
+			return fmt.Errorf(
+				"unbound config validation failed for %s: %w: %s",
+				config, err, strings.TrimSpace(string(output)))
+		}
 	}
 	return nil
 }

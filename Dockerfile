@@ -112,9 +112,14 @@ RUN chmod 0755 \
     && unbound -V | grep -F "Version ${UNBOUND_VERSION}" \
     && cp /usr/share/dnssec-root/trusted-key.key /run/guarddns/unbound/root.key \
     && chown -R unbound:unbound /run/guarddns/unbound \
+    && mkdir -p /run/guarddns/unbound-recursive \
+    && chown -R unbound:unbound /run/guarddns/unbound-recursive \
     && sed 's/__UNBOUND_VERBOSITY__/1/' /etc/guarddns/unbound.conf.tmpl > /tmp/unbound.conf \
     && unbound-checkconf /tmp/unbound.conf >/dev/null \
-    && rm -f /tmp/unbound.conf /run/guarddns/unbound/root.key
+    && sed 's/__UNBOUND_VERBOSITY__/1/' /etc/guarddns/unbound-recursive.conf.tmpl \
+         > /tmp/unbound-recursive.conf \
+    && unbound-checkconf /tmp/unbound-recursive.conf >/dev/null \
+    && rm -f /tmp/unbound.conf /tmp/unbound-recursive.conf /run/guarddns/unbound/root.key
 
 ENV AUTO_FORWARD=no \
     LOG_LEVEL=warn

@@ -1,0 +1,86 @@
+# CN classification resolver.
+#
+# The encrypted instance forwards every question to an overseas provider, so a
+# mainland CDN answers it with an overseas node and the CN CIDR test then calls
+# a mainland name foreign. This instance instead walks the delegation chain
+# itself. Because the outgoing queries leave from the deployment's own network,
+# authoritative and GeoDNS servers answer with mainland addresses and the test
+# becomes meaningful. Unbound's built-in root hints are used, so no hint file
+# has to be shipped or kept current.
+#
+# Its answers are a classification signal. Anything that is not a mainland
+# address is discarded and re-resolved over the encrypted instance, so plaintext
+# recursion being poisoned for foreign names cannot reach a client. For the same
+# reason this instance does not validate: the answers it keeps are mainland
+# ones, and everything else is replaced by a validated answer.
+server:
+  verbosity: __UNBOUND_VERBOSITY__
+  use-syslog: no
+  log-time-ascii: yes
+  log-queries: no
+  log-replies: no
+
+  interface: 127.0.0.1@5337
+  access-control: 127.0.0.0/8 allow
+  port: 5337
+  username: unbound
+  chroot: ""
+  directory: "/run/guarddns/unbound-recursive"
+  pidfile: "/run/guarddns/unbound-recursive/unbound.pid"
+
+  do-ip4: yes
+  do-ip6: no
+  do-udp: yes
+  do-tcp: yes
+  prefer-ip6: no
+  edns-buffer-size: 1232
+  max-udp-size: 1232
+
+  num-threads: 1
+  so-reuseport: no
+  outgoing-range: 256
+  num-queries-per-thread: 128
+  msg-cache-size: 8m
+  rrset-cache-size: 16m
+  infra-cache-numhosts: 2048
+
+  module-config: "iterator"
+  harden-glue: yes
+  harden-below-nxdomain: yes
+  harden-large-queries: yes
+  harden-short-bufsize: yes
+  harden-referral-path: no
+  qname-minimisation: yes
+  qname-minimisation-strict: no
+  deny-any: yes
+  # Plaintext recursion invites spoofed replies. These raise the cost of
+  # winning that race without pretending it cannot happen.
+  use-caps-for-id: yes
+  unwanted-reply-threshold: 10000000
+  outbound-msg-retry: 2
+
+  prefetch: yes
+  serve-expired: no
+  # Mainland CDN answers are short-lived and steer by locality, so holding them
+  # long defeats the point of asking from here.
+  cache-min-ttl: 0
+  cache-max-ttl: 600
+  cache-max-negative-ttl: 60
+
+  hide-identity: yes
+  hide-version: yes
+  identity: "GuardDNS"
+  version: "GuardDNS"
+
+  private-address: 10.0.0.0/8
+  private-address: 100.64.0.0/10
+  private-address: 127.0.0.0/8
+  private-address: 169.254.0.0/16
+  private-address: 172.16.0.0/12
+  private-address: 192.168.0.0/16
+  private-address: ::1/128
+  private-address: fc00::/7
+  private-address: fe80::/10
+
+remote-control:
+  control-enable: no

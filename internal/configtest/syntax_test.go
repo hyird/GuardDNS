@@ -96,13 +96,31 @@ func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 	config := string(source)
 	for _, required := range []string{
 		"tag: cn_path",
-		"'!resp_ip $cn_ips'",
+		"resp_ip $cn_ips",
 		"exec: goto validated_foreign_path",
 		"# Lists are fast paths, not the final classifier.",
 	} {
 		if !strings.Contains(config, required) {
 			t.Errorf("mosdns.yaml.tmpl is missing %q", required)
 		}
+	}
+
+	// The recursive resolver decides CN membership; it does not answer for it.
+	// Its reply is plaintext and poisoned for exactly the names that fall
+	// through, so the classifier must discard it and re-resolve before the
+	// client can be handed anything.
+	classifier := config[strings.Index(config, "tag: cn_path"):]
+	discard := strings.Index(classifier, "exec: drop_resp")
+	reresolve := strings.Index(classifier, "exec: $forward_unbound")
+	handoff := strings.Index(classifier, "exec: goto validated_foreign_path")
+	if discard < 0 || reresolve < 0 || handoff < 0 {
+		t.Fatal("cn_path no longer discards and re-resolves the classification answer")
+	}
+	if !(discard < reresolve && reresolve < handoff) {
+		t.Error("cn_path can hand a client the plaintext classification answer")
+	}
+	if !strings.Contains(config, "addr: 127.0.0.1:5337") {
+		t.Error("mosdns.yaml.tmpl does not reach the recursive CN resolver")
 	}
 	if strings.Contains(config, "# Unknown names fail closed to encrypted DNS.") {
 		t.Fatal("unknown names still bypass real-IP CN classification")

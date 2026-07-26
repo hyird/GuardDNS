@@ -9,6 +9,9 @@ It combines:
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
   validation and caching.
+- A second Unbound instance that resolves recursively for CN classification,
+  because a mainland name is only recognisable when the question is asked from
+  the deployment's own network.
 - An in-process loopback bridge that prefers NextDNS and Quad9 DoH through
   Mihomo, with direct Cloudflare and 360 DoH as emergency fallbacks.
 - Optional Mihomo DNS integration for validated fake-IP.
@@ -20,7 +23,7 @@ It combines:
 | --- | --- |
 | Unknown domains | Resolve once, accept CN IPs locally, and send validated NON-CN A answers to Mihomo when enabled |
 | Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in encrypted real IP otherwise and during outage |
-| Mainland DNS | Unbound answers are accepted only when A records contain CN IPs; non-CN answers enter the global path |
+| Mainland DNS | Recursive Unbound decides CN membership; its answer is served only when the A records are CN, and is discarded otherwise |
 | Fake-IP | Classified-global names go straight to Mihomo; unknown names reach it only after their real answer proves NON-CN |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
 | Cache | Unbound and the secure-real path cache only real answers; fake-IP is never cached by GuardDNS |
@@ -36,8 +39,10 @@ LAN -> RouterOS -> GuardDNS :53
                      +-- known global -> Mihomo fake-IP
                      |                    \-- Mihomo unusable -> encrypted real IP
                      |
-                     +-- unknown -> real answer -> CN IP -> return real IP
-                                                 \-- NON-CN -> optional Mihomo fake-IP
+                     +-- unknown -> recursive lookup -> CN IP -> return it
+                                                      \-- otherwise -> discard,
+                                                          re-resolve encrypted
+                                                          -> optional fake-IP
 
 Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound -> DoH/443
 ```
@@ -135,8 +140,16 @@ unhealthy.
 Supervisor state is sent to MosDNS through the Unix datagram socket
 `/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
 Private DNS data paths are loopback-only: MosDNS to Unbound on
-`127.0.0.1:5335`, and Unbound to the in-process DoH bridge on
-`127.0.0.1:5336`. Neither is exposed by the image.
+`127.0.0.1:5335`, Unbound to the in-process DoH bridge on `127.0.0.1:5336`, and
+MosDNS to the recursive CN classifier on `127.0.0.1:5337`. None is exposed by
+the image.
+
+The classifier resolves in plaintext, since a delegation walk is what makes a
+mainland answer mainland. It is only ever asked whether a name is CN: its reply
+is served when the addresses are CN and discarded otherwise, so a poisoned
+answer for a foreign name cannot reach a client. If it stops, the container
+reports `degraded` and mainland names fall back to the encrypted path, which
+resolves them correctly but from overseas.
 
 Prometheus metrics are available at `/metrics` on the fixed container listener
 `0.0.0.0:9091`. The Docker examples expose it only on host loopback:

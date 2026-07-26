@@ -71,24 +71,64 @@ plugins:
         - tag: unbound
           addr: 127.0.0.1:5335
 
-  - tag: direct_path
+  # Recursive resolver. Asking it is what makes the CN CIDR test mean anything:
+  # the delegation walk leaves from this network, so a mainland CDN answers with
+  # a mainland address instead of the overseas node an overseas forwarder gets.
+  - tag: recursive_unbound
+    type: forward
+    args:
+      upstreams:
+        - tag: unbound_recursive
+          addr: 127.0.0.1:5337
+
+  - tag: recursive_lookup
+    type: sequence
+    args:
+      - exec: $recursive_unbound
+
+  - tag: encrypted_lookup
     type: sequence
     args:
       - exec: $forward_unbound
 
+  # Losing the recursive resolver must cost mainland names their local answer,
+  # not their resolution. Falling back here is what makes that true, and it
+  # leaves the classifier behaving exactly as it did before this resolver
+  # existed.
+  - tag: classify_lookup
+    type: fallback
+    args:
+      primary: recursive_lookup
+      secondary: encrypted_lookup
+      threshold: 2000
+      always_standby: false
+
+  # force-direct.txt names are mainland by declaration, so they want the
+  # resolver that answers from here rather than from overseas.
+  - tag: direct_path
+    type: sequence
+    args:
+      - exec: $classify_lookup
+
   - tag: cn_path
     type: sequence
     args:
-      # PaoPaoDNS-style classification: obtain a real answer first, accept CN
-      # addresses locally, and send only validated NON-CN answers into the
-      # optional AUTO_FORWARD path.
-      - exec: $forward_unbound
+      # PaoPaoDNS-style classification, with its split between the resolver that
+      # decides CN membership and the one that produces the answer.
+      - exec: $classify_lookup
       - matches:
           - qtype 1
           - rcode 0
           - has_wanted_ans
-          - '!resp_ip $cn_ips'
-        exec: goto validated_foreign_path
+          - resp_ip $cn_ips
+        exec: accept
+      # Everything else the recursive resolver said is only a verdict, never an
+      # answer. Plaintext recursion is poisoned for exactly the names that reach
+      # this point, so discard it and let the encrypted, validating instance
+      # decide what the client actually receives.
+      - exec: drop_resp
+      - exec: $forward_unbound
+      - exec: goto validated_foreign_path
 
   - tag: main_sequence
     type: sequence
