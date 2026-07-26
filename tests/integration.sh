@@ -74,7 +74,10 @@ while [ "$i" -lt 40 ]; do
 done
 [ "$ready" -eq 1 ] || fail "GuardDNS did not become ready"
 
-cn_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" www.baidu.com A)
+# Use AliDNS's own stable mainland A records. www.baidu.com is geo-sensitive
+# and can legitimately return a Hong Kong address to an overseas CI runner,
+# which GuardDNS must classify as NON-CN.
+cn_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" dns.alidns.com A)
 [ -n "$cn_answer" ] || fail "mainland domain returned no A record"
 printf '%s\n' "$cn_answer" | grep -q '198\.18\.0\.42' \
   && fail "mainland domain was incorrectly sent to fake-IP"
