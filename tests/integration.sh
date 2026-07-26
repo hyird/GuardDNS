@@ -7,10 +7,12 @@ network="guarddns-test-$$"
 mock_name="guarddns-mock-$$"
 dns_name="guarddns-under-test-$$"
 client_name="guarddns-client-$$"
+rule_overrides=$(mktemp -d)
 
 cleanup() {
   docker rm -f "$client_name" "$dns_name" "$mock_name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
+  rm -rf "$rule_overrides"
 }
 trap cleanup EXIT INT TERM
 
@@ -28,6 +30,8 @@ fail() {
 }
 
 docker network create "$network" >/dev/null
+: >"$rule_overrides/direct.txt"
+: >"$rule_overrides/proxy.txt"
 
 docker image inspect -f '{{json .Config.Healthcheck.Test}}' "$image" \
   | grep -q 'guarddns-healthcheck' \
@@ -52,6 +56,8 @@ mock_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 docker run -d \
   --name "$dns_name" \
   --network "$network" \
+  -v "$rule_overrides/direct.txt:/usr/share/guarddns/rules/direct.txt:ro" \
+  -v "$rule_overrides/proxy.txt:/usr/share/guarddns/rules/proxy.txt:ro" \
   -e "AUTO_FORWARD=$mock_ip:5353" \
   -e LOG_LEVEL=info \
   "$image" >/dev/null
@@ -81,10 +87,9 @@ while [ "$i" -lt 40 ]; do
 done
 [ "$ready" -eq 1 ] || fail "GuardDNS did not become ready"
 
-# Use AliDNS's own stable mainland A records. www.baidu.com is geo-sensitive
-# and can legitimately return a Hong Kong address to an overseas CI runner,
-# which GuardDNS must classify as NON-CN.
-cn_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" dns.alidns.com A)
+# direct.txt/proxy.txt are deliberately empty in this container. This verifies
+# the PaoPaoDNS-style final classifier rather than a domain-list fast path.
+cn_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" www.12306.cn A)
 [ -n "$cn_answer" ] || fail "mainland domain returned no A record"
 printf '%s\n' "$cn_answer" | grep -q '198\.18\.0\.42' \
   && fail "mainland domain was incorrectly sent to fake-IP"
@@ -154,6 +159,11 @@ docker exec "$dns_name" sh -c \
 # real responses; two consecutive failures open the exponential-backoff
 # circuit.
 docker stop "$mock_name" >/dev/null
+cached_failover_answer=$(docker exec "$client_name" \
+  dig +time=3 +tries=1 +short "@$dns_ip" www.google.com A)
+[ -n "$cached_failover_answer" ] || fail "cached validation result was not reused"
+printf '%s\n' "$cached_failover_answer" | grep -q '198\.18\.0\.42' \
+  && fail "GuardDNS cached a fake-IP response after AUTO_FORWARD stopped"
 failover_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short "@$dns_ip" www.youtube.com A)
 [ -n "$failover_answer" ] || fail "AUTO_FORWARD failure returned no real answer"

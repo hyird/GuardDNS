@@ -64,12 +64,6 @@ plugins:
       files:
         - /usr/share/guarddns/rules/cncidr.txt
 
-  - tag: cn_cache
-    type: cache
-    args:
-      size: 16384
-      lazy_cache_ttl: 0
-
   - tag: forward_unbound
     type: forward
     args:
@@ -85,20 +79,16 @@ plugins:
   - tag: cn_path
     type: sequence
     args:
-      # Cache only the CN path. Final AUTO_FORWARD/fake-IP responses are never
-      # stored by GuardDNS, so an opened circuit takes effect immediately.
-      - exec: $cn_cache
+      # PaoPaoDNS-style classification: obtain a real answer first, accept CN
+      # addresses locally, and send only validated NON-CN answers into the
+      # optional AUTO_FORWARD path.
       - exec: $forward_unbound
-      # Decide from the completed real response instead of racing a timed
-      # fallback. This prevents a slow but healthy CN lookup from being
-      # overtaken by Mihomo's fake-IP response.
-      - matches:
-          - '!rcode 0'
-        exec: goto foreign_path
       - matches:
           - qtype 1
+          - rcode 0
+          - has_wanted_ans
           - '!resp_ip $cn_ips'
-        exec: goto foreign_path
+        exec: goto validated_foreign_path
 
   - tag: main_sequence
     type: sequence
@@ -126,8 +116,10 @@ plugins:
       - matches:
           - qname $cn_domains
         exec: goto cn_path
-      # Unknown names fail closed to encrypted DNS.
-      - exec: goto foreign_path
+      # Lists are fast paths, not the final classifier. Unknown names are
+      # resolved once and classified by the real response, matching the core
+      # PaoPaoDNS CN/NON-CN behavior.
+      - exec: goto cn_path
 
   - tag: secure_listener_path
     type: sequence

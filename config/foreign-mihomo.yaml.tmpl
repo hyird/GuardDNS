@@ -69,15 +69,21 @@ plugins:
       threshold: 150
       always_standby: false
 
-  # A is auto-forwarded only after encrypted DNS produced a successful, wanted
-  # answer. AAAA is rejected globally; NXDOMAIN, SERVFAIL, and NODATA stay
-  # untouched.
-  - tag: foreign_path
+  # AUTO_FORWARD sees only a successful A response that has already been
+  # resolved and validated. This entry is also used directly by the CN
+  # classifier, avoiding the duplicate validation query used by larger
+  # PaoPaoDNS-style process stacks.
+  - tag: validated_foreign_path
     type: sequence
     args:
-      - exec: $secure_real_path
       - matches:
           - qtype 1
           - rcode 0
           - has_wanted_ans
         exec: $auto_forward_fallback
+
+  - tag: foreign_path
+    type: sequence
+    args:
+      - exec: $secure_real_path
+      - exec: goto validated_foreign_path

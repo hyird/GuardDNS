@@ -20,6 +20,12 @@ plugins:
       - exec: $secure_cache
       - exec: $secure_unbound
 
+  # The main classifier targets the same entry in both runtime modes.
+  - tag: validated_foreign_path
+    type: sequence
+    args:
+      - exec: accept
+
   - tag: foreign_path
     type: sequence
     args:

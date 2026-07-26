@@ -88,6 +88,40 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	}
 }
 
+func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(source)
+	for _, required := range []string{
+		"tag: cn_path",
+		"'!resp_ip $cn_ips'",
+		"exec: goto validated_foreign_path",
+		"# Lists are fast paths, not the final classifier.",
+	} {
+		if !strings.Contains(config, required) {
+			t.Errorf("mosdns.yaml.tmpl is missing %q", required)
+		}
+	}
+	if strings.Contains(config, "# Unknown names fail closed to encrypted DNS.") {
+		t.Fatal("unknown names still bypass real-IP CN classification")
+	}
+	if strings.Contains(config, "tag: cn_cache") {
+		t.Fatal("CN classification cache can retain a final fake-IP response")
+	}
+
+	for _, name := range []string{"foreign-secure.yaml", "foreign-mihomo.yaml.tmpl"} {
+		source, err := os.ReadFile(filepath.Join("..", "..", "config", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(source), "tag: validated_foreign_path") {
+			t.Errorf("%s does not implement the validated NON-CN entry", name)
+		}
+	}
+}
+
 func decodeConfig(t *testing.T, path string) *coremain.Config {
 	t.Helper()
 	v := viper.New()

@@ -18,12 +18,12 @@ It combines:
 
 | Property | GuardDNS behavior |
 | --- | --- |
-| Unknown domains | Encrypted validation first; valid A answers use Mihomo DNS when AUTO_FORWARD is enabled |
+| Unknown domains | Resolve once, accept CN IPs locally, and send validated NON-CN A answers to Mihomo when enabled |
 | Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in encrypted real IP otherwise and during outage |
 | Mainland DNS | Unbound answers are accepted only when A records contain CN IPs; non-CN answers enter the global path |
 | Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
-| Cache | Separate CN/secure-real caches; fake-IP is never cached by GuardDNS |
+| Cache | Unbound and the secure-real path cache only real answers; fake-IP is never cached by GuardDNS |
 | Encrypted upstream | The Go bridge transports Unbound queries over DoH/443; Unbound validates DNSSEC locally |
 | Runtime state | No Redis and no runtime mutation of upstream rule files |
 | Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
@@ -33,11 +33,11 @@ The routing policy is intentionally fail-closed:
 ```text
 LAN -> RouterOS -> GuardDNS :53
                      |
-                     +-- known CN -> validating Unbound -> loopback DoH bridge
-                     |                 \-- non-CN or failure -> encrypted real IP
+                     +-- real answer -> CN IP -> return real IP
+                     |                \-- NON-CN -> optional Mihomo fake-IP
                      |
-                     +-- known global / unknown -> encrypted real IP
-                                                    \-- optional validated Mihomo fake-IP
+                     +-- known global -> encrypted real IP
+                                          \-- optional validated Mihomo fake-IP
 
 Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound -> DoH/443
 ```
@@ -83,10 +83,12 @@ real answer through encrypted DNS, making it safe as Mihomo's upstream.
 
 Only these two operational choices are configurable. IPv6 is always disabled.
 Listeners are fixed at `0.0.0.0:53`, `0.0.0.0:5304`, and `0.0.0.0:9091`;
-the timezone is `Asia/Shanghai`; CN/secure cache sizes are `16384`/`8192`;
-Known-CN lookups wait for their real response before the returned IP is
-classified. This avoids racing a healthy but slower CN response against
-Mihomo's fake-IP response.
+the timezone is `Asia/Shanghai`, and the secure real-answer cache size is
+`8192`. Domain lists are fast paths. Any unclassified name is resolved once
+and its real A response is checked against the CN CIDR set; CN answers are
+returned directly and NON-CN answers enter the optional Mihomo path. This
+avoids racing a healthy but slower CN response against Mihomo's fake-IP
+response.
 
 `AUTO_FORWARD` accepts `no`, a host/IPv4 address, or `host:port`. The DNS port
 defaults to `53` when omitted. Setting an address sends validated non-CN A
@@ -100,6 +102,14 @@ The built-in real-IP path uses two independent providers over authenticated
 DNS-over-HTTPS. The Go process transports DNS wire messages between the
 loopback-only Unbound forwarder and those providers; Unbound validates DNSSEC
 locally before MosDNS may pass an A query to Mihomo.
+
+This intentionally keeps the central
+[PaoPaoDNS](https://github.com/kkkgo/PaoPaoDNS) behavior—real lookup, CN IP
+classification, then optional custom forwarding for NON-CN—while reducing its
+`CUSTOM_FORWARD` plus `AUTO_FORWARD=yes` pair to one
+`AUTO_FORWARD=host[:port]` setting. Redis, SOCKS5, runtime update switches, and
+IPv6 modes are omitted; the existing real response is reused for seamless
+fallback instead of being queried again.
 
 Logs always go to the container's standard output/error stream and are never
 written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
