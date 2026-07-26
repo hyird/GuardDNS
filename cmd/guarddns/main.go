@@ -12,12 +12,21 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "version" {
-		fmt.Println(version)
-		return
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "version":
+			fmt.Println(version)
+			return
+		case "healthcheck":
+			if err := runHealthcheck(); err != nil {
+				fmt.Fprintf(os.Stderr, "GuardDNS health check failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 	}
 	if len(os.Args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: guarddns [version]")
+		fmt.Fprintln(os.Stderr, "usage: guarddns [version|healthcheck]")
 		os.Exit(2)
 	}
 

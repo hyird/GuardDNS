@@ -6,12 +6,16 @@ plugins:
     args:
       concurrent: 2
       upstreams:
-        - tag: cloudflare
-          addr: https://cloudflare-dns.com/dns-query
-          dial_addr: 1.1.1.1:443
-        - tag: google
-          addr: https://dns.google/dns-query
-          dial_addr: 8.8.8.8:443
+        # Bootstrap only discovers the current service IP. The DNS response is
+        # still transported over authenticated HTTPS.
+        - tag: alidns
+          addr: https://dns.alidns.com/dns-query
+          bootstrap: 223.5.5.5
+          bootstrap_version: 4
+        - tag: dnspod
+          addr: https://doh.pub/dns-query
+          bootstrap: 119.29.29.29
+          bootstrap_version: 4
 
   - tag: secure_cache
     type: cache

@@ -43,6 +43,38 @@ func TestConfigTemplatesDecode(t *testing.T) {
 	}
 }
 
+func TestSecureUpstreamsUseEncryptedDomainEndpoints(t *testing.T) {
+	for _, name := range []string{"foreign-secure.yaml", "foreign-mihomo.yaml.tmpl"} {
+		t.Run(name, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("..", "..", "config", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := string(source)
+			for _, required := range []string{
+				"addr: https://dns.alidns.com/dns-query",
+				"bootstrap: 223.5.5.5",
+				"addr: https://doh.pub/dns-query",
+				"bootstrap: 119.29.29.29",
+			} {
+				if !strings.Contains(config, required) {
+					t.Errorf("%s is missing %q", name, required)
+				}
+			}
+			for _, forbidden := range []string{
+				"dial_addr: 1.1.1.1:443",
+				"dial_addr: 8.8.8.8:443",
+				"addr: 223.5.5.5",
+				"addr: 119.29.29.29",
+			} {
+				if strings.Contains(config, forbidden) {
+					t.Errorf("%s still contains unsafe fixed/plain upstream %q", name, forbidden)
+				}
+			}
+		})
+	}
+}
+
 func decodeConfig(t *testing.T, path string) *coremain.Config {
 	t.Helper()
 	v := viper.New()

@@ -4,12 +4,17 @@ plugins:
     args:
       concurrent: 2
       upstreams:
-        - tag: cloudflare
-          addr: https://cloudflare-dns.com/dns-query
-          dial_addr: 1.1.1.1:443
-        - tag: google
-          addr: https://dns.google/dns-query
-          dial_addr: 8.8.8.8:443
+        # Resolve the provider hostname through a reachable bootstrap server,
+        # then authenticate it with TLS. This follows provider IP changes and
+        # avoids depending on direct routes to fixed overseas DoH addresses.
+        - tag: alidns
+          addr: https://dns.alidns.com/dns-query
+          bootstrap: 223.5.5.5
+          bootstrap_version: 4
+        - tag: dnspod
+          addr: https://doh.pub/dns-query
+          bootstrap: 119.29.29.29
+          bootstrap_version: 4
 
   - tag: secure_cache
     type: cache

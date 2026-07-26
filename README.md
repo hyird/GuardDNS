@@ -8,9 +8,10 @@ It combines:
 
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for local recursive DNS with DNSSEC validation.
-- Cloudflare and Google DoH with fixed dial IPs for encrypted global answers.
+- AliDNS and DNSPod DoH with dynamic, provider-domain endpoints for encrypted
+  real-IP answers.
 - Optional Mihomo DNS integration for validated fake-IP.
-- Docker health checks and Prometheus runtime metrics.
+- Functional Docker health checks and Prometheus runtime metrics.
 
 ## Why it is stricter
 
@@ -22,7 +23,7 @@ It combines:
 | Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
 | Cache | Separate CN/secure-real caches; fake-IP is never cached by GuardDNS |
-| Bootstrap | DoH endpoints use fixed dial IPs, so no bootstrap resolver is needed |
+| Bootstrap | Reachable IPv4 DNS discovers current DoH service IPs; TLS authenticates every real-IP query |
 | Runtime state | No Redis and no runtime mutation of upstream rule files |
 | Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
 
@@ -94,6 +95,9 @@ Mihomo DNS fails, it reuses that same real answer without another lookup.
 Failures use exponential retry delays from `1s` to `5min`; while the circuit is
 open, queries bypass Mihomo immediately. A half-open probe restores forwarding
 automatically after recovery. Set it to `no` to use encrypted real IP only.
+The built-in real-IP path uses `dns.alidns.com` and `doh.pub` by domain, with
+`223.5.5.5` and `119.29.29.29` used only to discover their current IPv4
+addresses. Actual DNS messages and responses use authenticated HTTPS.
 
 Logs always go to the container's standard output/error stream and are never
 written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
@@ -104,9 +108,11 @@ verbosity through the same setting.
 The Go entrypoint independently supervises MosDNS and Unbound. If either child
 exits, it is restarted with jittered exponential delays from `1s` to `30s`;
 the container stays up and the other resolver continues serving what it can.
-The health check uses `/plugins/guarddns/healthz`. A restarting Unbound reports
-`degraded` but stays healthy because MosDNS can use encrypted fallback; missing
-MosDNS or stale supervisor state reports unhealthy.
+The health check verifies `/plugins/guarddns/healthz` and performs a real A
+query through the secure `127.0.0.1:5304` listener. A restarting Unbound may
+report `degraded` but stays healthy while encrypted DNS still works; missing
+MosDNS, stale supervisor state, or an unusable secure DNS path reports
+unhealthy.
 
 Supervisor state is sent to MosDNS through the Unix datagram socket
 `/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
@@ -122,7 +128,7 @@ http://127.0.0.1:9091/metrics
 
 In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports
 end-to-end counters and latency histograms with the collector names `main` and
-`secure`. Upstream metrics distinguish `cloudflare`, `google`, `unbound`, and
+`secure`. Upstream metrics distinguish `alidns`, `dnspod`, `unbound`, and
 `auto_forward`. Supervisor metrics
 begin with `mosdns_guarddns_component_`; circuit state, retry delay, failures,
 and bypasses begin with `mosdns_guarddns_circuit_`.
@@ -200,7 +206,7 @@ Local integration tests build a mock Mihomo DNS endpoint and verify:
 - NODATA is not converted to fake-IP;
 - secure real-IP mode and both UDP/TCP listeners start correctly;
 - IPv6 policy and environment input validation.
-- the container health check and Prometheus listener metrics.
+- the functional secure-DNS health check and Prometheus listener metrics.
 - AUTO_FORWARD custom ports, seamless failure fallback, exponential backoff,
   and half-open recovery.
 - independent MosDNS/Unbound crash recovery and restart metrics.
