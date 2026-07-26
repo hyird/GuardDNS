@@ -244,6 +244,8 @@ to both `real-ip.txt` and Mihomo's `fake-ip-filter`.
 Run the integration suite with:
 
 ```sh
+go test ./...
+go vet ./...
 docker build -t guarddns:test .
 sh tests/integration.sh guarddns:test
 ```
@@ -261,6 +263,10 @@ UPX `--best --lzma`; the prepared Alpine filesystem is copied into a scratch
 stage so each platform manifest contains exactly one filesystem layer. CI
 checks that layer count and executes the compressed binaries on every published
 architecture.
+
+The CI jobs keep independent BuildKit caches for AMD64, ARM64, and ARMv7.
+The publish job consumes all three tested caches instead of recompiling each
+platform, while Go tests and vet run once before the integration image build.
 
 Third-party components and data licenses are listed in
 [THIRD_PARTY.md](THIRD_PARTY.md).

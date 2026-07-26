@@ -19,7 +19,6 @@ COPY config/ config/
 COPY internal/ internal/
 
 RUN set -eux; \
-    go test ./...; \
     target_goarm=""; \
     if [ "$TARGETARCH" = arm ]; then target_goarm="${TARGETVARIANT#v}"; fi; \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$target_goarm" \

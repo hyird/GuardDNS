@@ -232,6 +232,8 @@ Mihomo 的 `fake-ip-filter`。
 运行集成测试：
 
 ```sh
+go test ./...
+go vet ./...
 docker build -t guarddns:test .
 sh tests/integration.sh guarddns:test
 ```
@@ -246,6 +248,10 @@ GHCR 镜像。规则归档和 Go 模块图均通过校验和或版本固定。�
 UPX `--best --lzma` 压缩；准备好的 Alpine 文件系统整体复制到 scratch 阶段，
 因此每个平台清单严格只有一个文件系统层。CI 会检查层数，并在所有发布架构上
 实际执行压缩后的二进制。
+
+CI 为 AMD64、ARM64 和 ARMv7 分别维护 BuildKit 缓存。发布任务直接复用三份
+已经测试过的缓存，不再重新编译每个平台；Go 测试和 vet 只在集成镜像构建前
+执行一次。
 
 第三方组件和数据许可证见
 [THIRD_PARTY.zh-CN.md](THIRD_PARTY.zh-CN.md)。
