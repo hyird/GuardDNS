@@ -43,7 +43,7 @@ func TestConfigTemplatesDecode(t *testing.T) {
 	}
 }
 
-func TestSecureUpstreamsUseEncryptedDomainEndpoints(t *testing.T) {
+func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	for _, name := range []string{"foreign-secure.yaml", "foreign-mihomo.yaml.tmpl"} {
 		t.Run(name, func(t *testing.T) {
 			source, err := os.ReadFile(filepath.Join("..", "..", "config", name))
@@ -52,26 +52,41 @@ func TestSecureUpstreamsUseEncryptedDomainEndpoints(t *testing.T) {
 			}
 			config := string(source)
 			for _, required := range []string{
-				"addr: https://dns.alidns.com/dns-query",
-				"bootstrap: 223.5.5.5",
-				"addr: https://doh.pub/dns-query",
-				"bootstrap: 119.29.29.29",
+				"tag: secure_unbound",
+				"addr: 127.0.0.1:5335",
 			} {
 				if !strings.Contains(config, required) {
 					t.Errorf("%s is missing %q", name, required)
 				}
 			}
 			for _, forbidden := range []string{
-				"dial_addr: 1.1.1.1:443",
-				"dial_addr: 8.8.8.8:443",
-				"addr: 223.5.5.5",
-				"addr: 119.29.29.29",
+				"addr: https://",
+				"dial_addr:",
+				"bootstrap:",
 			} {
 				if strings.Contains(config, forbidden) {
-					t.Errorf("%s still contains unsafe fixed/plain upstream %q", name, forbidden)
+					t.Errorf("%s bypasses validating Unbound with %q", name, forbidden)
 				}
 			}
 		})
+	}
+
+	source, err := os.ReadFile(filepath.Join("..", "..", "config", "unbound.conf.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(source)
+	for _, required := range []string{
+		`module-config: "validator iterator"`,
+		`auto-trust-anchor-file: "/run/guarddns/unbound/root.key"`,
+		`tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"`,
+		"forward-tls-upstream: yes",
+		"forward-addr: 223.5.5.5@853#dns.alidns.com",
+		"forward-addr: 1.12.12.12@853#dot.pub",
+	} {
+		if !strings.Contains(config, required) {
+			t.Errorf("unbound.conf.tmpl is missing %q", required)
+		}
 	}
 }
 

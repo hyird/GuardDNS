@@ -1,20 +1,12 @@
 plugins:
-  - tag: forward_remote
+  # Unbound owns encrypted transport, caching, and DNSSEC validation. Keeping
+  # the secure MosDNS path on loopback avoids duplicating trust decisions.
+  - tag: secure_unbound
     type: forward
     args:
-      concurrent: 2
       upstreams:
-        # Resolve the provider hostname through a reachable bootstrap server,
-        # then authenticate it with TLS. This follows provider IP changes and
-        # avoids depending on direct routes to fixed overseas DoH addresses.
-        - tag: alidns
-          addr: https://dns.alidns.com/dns-query
-          bootstrap: 223.5.5.5
-          bootstrap_version: 4
-        - tag: dnspod
-          addr: https://doh.pub/dns-query
-          bootstrap: 119.29.29.29
-          bootstrap_version: 4
+        - tag: unbound_secure
+          addr: 127.0.0.1:5335
 
   - tag: secure_cache
     type: cache
@@ -26,7 +18,7 @@ plugins:
     type: sequence
     args:
       - exec: $secure_cache
-      - exec: $forward_remote
+      - exec: $secure_unbound
 
   - tag: foreign_path
     type: sequence

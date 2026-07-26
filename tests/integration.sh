@@ -137,7 +137,10 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_for
   || fail "AUTO_FORWARD circuit state was not exported"
 
 docker exec "$dns_name" sh -c \
-  "! grep -R -E 'dial_addr: (1\\.1\\.1\\.1|8\\.8\\.8\\.8)|addr: (223\\.5\\.5\\.5|119\\.29\\.29\\.29)' /run/guarddns /etc/guarddns"
+  "grep -q 'forward-tls-upstream: yes' /run/guarddns/unbound.conf &&
+   grep -q 'forward-addr: 223.5.5.5@853#dns.alidns.com' /run/guarddns/unbound.conf &&
+   grep -q 'forward-addr: 1.12.12.12@853#dot.pub' /run/guarddns/unbound.conf &&
+   ! grep -R -E 'addr: https://|dial_addr:|forward-addr: .+@53([^0-9]|$)' /run/guarddns /etc/guarddns"
 
 # Stop the configured Mihomo DNS. Queries must seamlessly reuse their validated
 # real responses; two consecutive failures open the exponential-backoff

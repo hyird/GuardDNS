@@ -1,21 +1,12 @@
 plugins:
   # Built-in encrypted real-IP resolver. It validates that the domain exists
   # before AUTO_FORWARD is attempted and is also the outage fallback.
-  - tag: forward_remote
+  - tag: secure_unbound
     type: forward
     args:
-      concurrent: 2
       upstreams:
-        # Bootstrap only discovers the current service IP. The DNS response is
-        # still transported over authenticated HTTPS.
-        - tag: alidns
-          addr: https://dns.alidns.com/dns-query
-          bootstrap: 223.5.5.5
-          bootstrap_version: 4
-        - tag: dnspod
-          addr: https://doh.pub/dns-query
-          bootstrap: 119.29.29.29
-          bootstrap_version: 4
+        - tag: unbound_secure
+          addr: 127.0.0.1:5335
 
   - tag: secure_cache
     type: cache
@@ -27,7 +18,7 @@ plugins:
     type: sequence
     args:
       - exec: $secure_cache
-      - exec: $forward_remote
+      - exec: $secure_unbound
 
   - tag: forward_auto_raw
     type: forward

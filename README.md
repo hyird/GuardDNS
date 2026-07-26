@@ -7,9 +7,10 @@ successor to monolithic DNS bundles.
 It combines:
 
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
-- Alpine-packaged Unbound 1.25.1 for local recursive DNS with DNSSEC validation.
-- AliDNS and DNSPod DoH with dynamic, provider-domain endpoints for encrypted
-  real-IP answers.
+- Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
+  validation and caching.
+- AliDNS and DNSPod DNS-over-TLS upstreams reachable without special
+  RouterOS routes.
 - Optional Mihomo DNS integration for validated fake-IP.
 - Functional Docker health checks and Prometheus runtime metrics.
 
@@ -18,12 +19,12 @@ It combines:
 | Property | GuardDNS behavior |
 | --- | --- |
 | Unknown domains | Encrypted validation first; valid A answers use Mihomo DNS when AUTO_FORWARD is enabled |
-| Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in DoH otherwise and during outage |
-| Mainland DNS | Unbound recursion accepted only when A answers contain CN IPs; non-CN answers enter the global path |
+| Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in encrypted real IP otherwise and during outage |
+| Mainland DNS | Unbound answers are accepted only when A records contain CN IPs; non-CN answers enter the global path |
 | Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
 | Cache | Separate CN/secure-real caches; fake-IP is never cached by GuardDNS |
-| Bootstrap | Reachable IPv4 DNS discovers current DoH service IPs; TLS authenticates every real-IP query |
+| Encrypted upstream | Unbound authenticates AliDNS and DNSPod over TLS on port 853 and validates DNSSEC locally |
 | Runtime state | No Redis and no runtime mutation of upstream rule files |
 | Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
 
@@ -32,13 +33,13 @@ The routing policy is intentionally fail-closed:
 ```text
 LAN -> RouterOS -> GuardDNS :53
                      |
-                     +-- known CN -> Unbound DNSSEC recursion
-                     |                 \-- non-CN or failure -> encrypted DoH
+                     +-- known CN -> validating Unbound over DoT
+                     |                 \-- non-CN or failure -> encrypted real IP
                      |
-                     +-- known global / unknown -> encrypted DoH
-                                                   \-- optional validated Mihomo fake-IP
+                     +-- known global / unknown -> encrypted real IP
+                                                    \-- optional validated Mihomo fake-IP
 
-Mihomo real DNS upstream -> GuardDNS :5304 -> encrypted DoH only
+Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound over DoT
 ```
 
 ## Quick start
@@ -95,9 +96,9 @@ Mihomo DNS fails, it reuses that same real answer without another lookup.
 Failures use exponential retry delays from `1s` to `5min`; while the circuit is
 open, queries bypass Mihomo immediately. A half-open probe restores forwarding
 automatically after recovery. Set it to `no` to use encrypted real IP only.
-The built-in real-IP path uses `dns.alidns.com` and `doh.pub` by domain, with
-`223.5.5.5` and `119.29.29.29` used only to discover their current IPv4
-addresses. Actual DNS messages and responses use authenticated HTTPS.
+The built-in real-IP path uses two independent providers over authenticated
+DNS-over-TLS. Unbound validates DNSSEC locally before MosDNS may pass an A
+query to Mihomo.
 
 Logs always go to the container's standard output/error stream and are never
 written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
@@ -128,7 +129,7 @@ http://127.0.0.1:9091/metrics
 
 In addition to Go, process, cache, and tagged upstream metrics, GuardDNS exports
 end-to-end counters and latency histograms with the collector names `main` and
-`secure`. Upstream metrics distinguish `alidns`, `dnspod`, `unbound`, and
+`secure`. MosDNS upstream metrics distinguish `unbound`, `unbound_secure`, and
 `auto_forward`. Supervisor metrics
 begin with `mosdns_guarddns_component_`; circuit state, retry delay, failures,
 and bypasses begin with `mosdns_guarddns_circuit_`.
@@ -143,7 +144,7 @@ The `/data` volume is initialized with:
 
 - `force-secure.txt`: always return encrypted real IP, bypassing fake-IP.
 - `force-fakeip.txt`: force the global/fake-IP path.
-- `force-direct.txt`: force local Unbound recursion without geographic filtering.
+- `force-direct.txt`: force validating Unbound without geographic filtering.
 
 Unbound's writable DNSSEC trust anchor is kept under
 `/run/guarddns/unbound`, not in the persistent rule volume.
