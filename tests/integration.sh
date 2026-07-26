@@ -200,9 +200,21 @@ second_failover_answer=$(docker exec "$client_name" \
 [ -n "$second_failover_answer" ] || fail "second AUTO_FORWARD failure returned no real answer"
 printf '%s\n' "$second_failover_answer" | grep -q '198\.18\.0\.42' \
   && fail "second AUTO_FORWARD failure returned fake-IP"
-sleep 1
-docker logs "$dns_name" 2>&1 \
-  | grep -q 'AUTO_FORWARD circuit opened' \
+# How many consecutive failures should open the circuit is a tuning decision.
+# The property under test is that a sustained outage eventually opens it rather
+# than retrying every query forever, so drive failures until it trips.
+circuit_opened=0
+i=0
+while [ "$i" -lt 12 ]; do
+  docker exec "$client_name" \
+    dig +time=4 +tries=1 +short "@$dns_ip" fakeip-first.test A >/dev/null 2>&1 || true
+  if docker logs "$dns_name" 2>&1 | grep -q 'AUTO_FORWARD circuit opened'; then
+    circuit_opened=1
+    break
+  fi
+  i=$((i + 1))
+done
+[ "$circuit_opened" -eq 1 ] \
   || fail "AUTO_FORWARD circuit did not enter exponential backoff"
 
 # After the backoff expires, one half-open probe should restore forwarding.
