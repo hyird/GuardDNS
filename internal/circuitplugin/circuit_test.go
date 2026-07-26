@@ -3,6 +3,7 @@ package circuitplugin
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,6 +59,70 @@ func TestCircuitRequiresConsecutiveFailuresAndBacksOff(t *testing.T) {
 	c.succeed()
 	if c.backoffStep != 0 || c.consecutiveFailures != 0 {
 		t.Fatal("success did not reset circuit")
+	}
+}
+
+func TestLostAttemptIsRetriedBeforeDowngradingRouting(t *testing.T) {
+	c := testCircuit()
+	c.failureThreshold = 1
+	var calls atomic.Int32
+	p := &Plugin{
+		primary: sequence.ExecutableFunc(func(_ context.Context, qCtx *query_context.Context) error {
+			// Model a dropped datagram: the first attempt outlives its budget.
+			if calls.Add(1) == 1 {
+				time.Sleep(200 * time.Millisecond)
+				return nil
+			}
+			response := new(dns.Msg)
+			response.SetReply(qCtx.Q())
+			qCtx.SetResponse(response)
+			return nil
+		}),
+		circuit:        c,
+		attempts:       3,
+		attemptTimeout: 10 * time.Millisecond,
+		failureRCodes:  map[int]struct{}{},
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+	qCtx := query_context.NewContext(query)
+
+	if err := p.Exec(context.Background(), qCtx); err != nil {
+		t.Fatalf("Exec error = %v, want nil", err)
+	}
+	if qCtx.R() == nil {
+		t.Fatal("retry did not deliver the fake-IP response")
+	}
+	if c.backoffStep != 0 || c.consecutiveFailures != 0 {
+		t.Fatal("a retried attempt counted as a circuit failure")
+	}
+}
+
+func TestAllAttemptsExhaustedStillFailsTheCircuit(t *testing.T) {
+	c := testCircuit()
+	c.failureThreshold = 1
+	var calls atomic.Int32
+	p := &Plugin{
+		primary: sequence.ExecutableFunc(func(_ context.Context, _ *query_context.Context) error {
+			calls.Add(1)
+			return errors.New("upstream down")
+		}),
+		circuit:        c,
+		attempts:       3,
+		attemptTimeout: time.Second,
+		failureRCodes:  map[int]struct{}{},
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+
+	if err := p.Exec(context.Background(), query_context.NewContext(query)); err == nil {
+		t.Fatal("exhausted attempts returned success")
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
+	}
+	if c.backoffStep != 1 {
+		t.Fatal("exhausted attempts did not open the circuit")
 	}
 }
 

@@ -21,7 +21,7 @@ It combines:
 | Unknown domains | Resolve once, accept CN IPs locally, and send validated NON-CN A answers to Mihomo when enabled |
 | Global DNS | Mihomo DNS when AUTO_FORWARD is enabled; built-in encrypted real IP otherwise and during outage |
 | Mainland DNS | Unbound answers are accepted only when A records contain CN IPs; non-CN answers enter the global path |
-| Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
+| Fake-IP | Classified-global names go straight to Mihomo; unknown names reach it only after their real answer proves NON-CN |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
 | Cache | Unbound and the secure-real path cache only real answers; fake-IP is never cached by GuardDNS |
 | Encrypted upstream | The Go bridge transports Unbound queries over DoH/443; Unbound validates DNSSEC locally |
@@ -33,11 +33,11 @@ The routing policy is intentionally fail-closed:
 ```text
 LAN -> RouterOS -> GuardDNS :53
                      |
-                     +-- real answer -> CN IP -> return real IP
-                     |                \-- NON-CN -> optional Mihomo fake-IP
+                     +-- known global -> Mihomo fake-IP
+                     |                    \-- Mihomo unusable -> encrypted real IP
                      |
-                     +-- known global -> encrypted real IP
-                                          \-- optional validated Mihomo fake-IP
+                     +-- unknown -> real answer -> CN IP -> return real IP
+                                                 \-- NON-CN -> optional Mihomo fake-IP
 
 Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound -> DoH/443
 ```

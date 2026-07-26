@@ -27,6 +27,7 @@ var (
 type Args struct {
 	Primary              string `yaml:"primary"`
 	FailureThreshold     int    `yaml:"failure_threshold"`
+	Attempts             int    `yaml:"attempts"`
 	AttemptTimeoutMillis int    `yaml:"attempt_timeout_millis"`
 	InitialBackoffMillis int    `yaml:"initial_backoff_millis"`
 	MaxBackoffMillis     int    `yaml:"max_backoff_millis"`
@@ -155,6 +156,7 @@ func jitterDelay(nominal, maximum time.Duration) time.Duration {
 type Plugin struct {
 	primary        sequence.Executable
 	circuit        *circuit
+	attempts       int
 	attemptTimeout time.Duration
 	failureRCodes  map[int]struct{}
 	registerer     prometheus.Registerer
@@ -174,6 +176,10 @@ func initPlugin(bp *coremain.BP, raw any) (any, error) {
 	threshold := args.FailureThreshold
 	if threshold <= 0 {
 		threshold = 2
+	}
+	attempts := args.Attempts
+	if attempts <= 0 {
+		attempts = 1
 	}
 	attemptTimeout := time.Duration(args.AttemptTimeoutMillis) * time.Millisecond
 	if attemptTimeout <= 0 {
@@ -225,6 +231,7 @@ func initPlugin(bp *coremain.BP, raw any) (any, error) {
 	}
 	return &Plugin{
 		primary:        primary,
+		attempts:       attempts,
 		attemptTimeout: attemptTimeout,
 		circuit: &circuit{
 			name:             bp.Tag(),
@@ -251,6 +258,46 @@ func (p *Plugin) Exec(ctx context.Context, qCtx *query_context.Context) error {
 		return errCircuitOpen
 	}
 
+	// A dropped datagram on the container bridge must not be reported as an
+	// unusable Mihomo. Losing the fake IP silently downgrades the routing
+	// policy to a real address, so retry the plain-UDP hop before giving up.
+	attempts := p.attempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		var response *dns.Msg
+		response, err = p.attemptOnce(ctx, qCtx)
+		if err == nil && response != nil {
+			if _, failed := p.failureRCodes[response.Rcode]; !failed {
+				qCtx.SetResponse(response)
+				p.circuit.succeed()
+				return nil
+			}
+			// SERVFAIL/REFUSED is a verdict from a Mihomo that did answer.
+			// Retrying it only adds latency to a decided failure.
+			err = fmt.Errorf("upstream DNS rcode %s", dns.RcodeToString[response.Rcode])
+			break
+		}
+		if ctx.Err() != nil {
+			qCtx.SetResponse(nil)
+			return context.Cause(ctx)
+		}
+		if err == nil {
+			err = errNoResponse
+		}
+	}
+
+	qCtx.SetResponse(nil)
+	p.circuit.fail(permit, err)
+	return err
+}
+
+func (p *Plugin) attemptOnce(
+	ctx context.Context,
+	qCtx *query_context.Context,
+) (*dns.Msg, error) {
 	// MosDNS's forward plugin uses a fixed five-second upstream deadline. Run
 	// it against a private query context so GuardDNS can declare the attempt
 	// failed sooner without a late response mutating the caller's context.
@@ -263,32 +310,14 @@ func (p *Plugin) Exec(ctx context.Context, qCtx *query_context.Context) error {
 	timer := time.NewTimer(p.attemptTimeout)
 	defer timer.Stop()
 
-	var err error
-	var response *dns.Msg
 	select {
-	case err = <-result:
-		response = attemptCtx.R()
+	case err := <-result:
+		return attemptCtx.R(), err
 	case <-timer.C:
-		err = errAttemptTimeout
+		return nil, errAttemptTimeout
 	case <-ctx.Done():
-		qCtx.SetResponse(nil)
-		return context.Cause(ctx)
+		return nil, context.Cause(ctx)
 	}
-
-	if err == nil && response != nil {
-		if _, failed := p.failureRCodes[response.Rcode]; !failed {
-			qCtx.SetResponse(response)
-			p.circuit.succeed()
-			return nil
-		}
-		err = fmt.Errorf("upstream DNS rcode %s", dns.RcodeToString[response.Rcode])
-	}
-	if err == nil {
-		err = errNoResponse
-	}
-	qCtx.SetResponse(nil)
-	p.circuit.fail(permit, err)
-	return err
 }
 
 func (p *Plugin) Close() error {

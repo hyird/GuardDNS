@@ -1,6 +1,6 @@
 plugins:
-  # Built-in encrypted real-IP resolver. It validates that the domain exists
-  # before AUTO_FORWARD is attempted and is also the outage fallback.
+  # Built-in encrypted real-IP resolver. It classifies unknown names as CN or
+  # NON-CN, serves the force-secure path, and stands by for a Mihomo outage.
   - tag: secure_unbound
     type: forward
     args:
@@ -20,21 +20,36 @@ plugins:
       - exec: $secure_cache
       - exec: $secure_unbound
 
+  # MosDNS resends an unanswered UDP query on a one-second ticker, which is
+  # exactly where the circuit's attempt budget used to expire: every dropped
+  # datagram became a routing downgrade instead of being recovered a
+  # millisecond later. TCP hands retransmission to the kernel and removes the
+  # race entirely. Mihomo serves DNS on TCP and UDP from the same listener, and
+  # the connection is reused, so the hop stays sub-millisecond.
   - tag: forward_auto_raw
     type: forward
     args:
       upstreams:
         - tag: auto_forward
-          addr: '__AUTO_FORWARD_ENDPOINT__'
+          addr: 'tcp://__AUTO_FORWARD_ENDPOINT__'
+          idle_timeout: 300
 
   - tag: auto_forward_circuit
     type: guarddns_circuit
     args:
       primary: forward_auto_raw
-      failure_threshold: 2
-      attempt_timeout_millis: 1000
+      # Losing the fake IP silently downgrades routing to a real address, so
+      # the circuit must only open for a Mihomo that is genuinely unusable.
+      # Mihomo answers a fake-IP query from its own pool in single-digit
+      # milliseconds; a short attempt with retries costs less than one long
+      # attempt and survives a dropped datagram on the container bridge.
+      failure_threshold: 5
+      attempts: 2
+      attempt_timeout_millis: 800
       initial_backoff_millis: 1000
-      max_backoff_millis: 300000
+      # An open circuit bypasses Mihomo for every client at once. Cap the
+      # blackout well below the five minutes a fake-IP outage used to cause.
+      max_backoff_millis: 30000
       # SERVFAIL and REFUSED indicate that Mihomo's DNS service is not usable.
       # NXDOMAIN/NODATA are name-specific answers and must not open the circuit.
       failure_rcodes:
@@ -56,9 +71,17 @@ plugins:
   # The fallback plugin copies the current query context, including the
   # validated real response. The standby branch therefore returns that same
   # answer without repeating an encrypted lookup.
+  #
+  # This branch changes the routing policy for the name: a domain that should
+  # have reached Mihomo is handed to the client as a real address instead.
+  # That is acceptable only while it stays transient, so the answer carries a
+  # short TTL. Without the clamp an upstream TTL of hours is re-cached by
+  # RouterOS and by clients, and one lost fake-IP query pins the domain to the
+  # direct path long after Mihomo recovered.
   - tag: keep_real_response
     type: sequence
     args:
+      - exec: ttl 5
       - exec: accept
 
   - tag: auto_forward_fallback
@@ -66,13 +89,15 @@ plugins:
     args:
       primary: fakeip_query
       secondary: keep_real_response
-      threshold: 150
+      # Stand-by must not race a healthy Mihomo, and it must not pre-empt a
+      # query the circuit is still retrying. Above the circuit's own budget
+      # this branch becomes purely error-driven.
+      threshold: 2000
       always_standby: false
 
-  # AUTO_FORWARD sees only a successful A response that has already been
-  # resolved and validated. This entry is also used directly by the CN
-  # classifier, avoiding the duplicate validation query used by larger
-  # PaoPaoDNS-style process stacks.
+  # Entered by the CN classifier, which has already resolved the name to decide
+  # it is not CN. That real answer is in hand, so it doubles as the stand-by and
+  # no second lookup is needed. This mirrors PaoPaoDNS's AUTO_FORWARD_CHECK.
   - tag: validated_foreign_path
     type: sequence
     args:
@@ -82,8 +107,34 @@ plugins:
           - has_wanted_ans
         exec: $auto_forward_fallback
 
+  # A name that is already classified as global does not need a real answer
+  # first. PaoPaoDNS sends its force_forward_list straight to the custom
+  # forwarder; resolving it over DoH beforehand only added a slow, failure-prone
+  # step to the hot path, and left a real address sitting in the context ready
+  # to be handed out on any hiccup. Encrypted real DNS is the stand-by here, not
+  # a prerequisite.
+  - tag: encrypted_real_standby
+    type: sequence
+    args:
+      - exec: drop_resp
+      - exec: $secure_real_path
+
+  - tag: fakeip_first
+    type: fallback
+    args:
+      primary: fakeip_query
+      secondary: encrypted_real_standby
+      threshold: 2000
+      always_standby: false
+
   - tag: foreign_path
     type: sequence
     args:
-      - exec: $secure_real_path
-      - exec: goto validated_foreign_path
+      - matches:
+          - qtype 1
+        exec: $fakeip_first
+      # Non-A questions never carry a fake IP, and a failed fake-IP lookup
+      # leaves nothing behind. Both resolve over encrypted real DNS.
+      - matches:
+          - '!has_resp'
+        exec: $secure_real_path
