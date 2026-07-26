@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -59,6 +60,98 @@ func TestDoHBridgeReturnsServfailWhenAllUpstreamsFail(t *testing.T) {
 	bridge.ServeDNS(writer, query)
 	if writer.response == nil || writer.response.Rcode != dns.RcodeServerFailure {
 		t.Fatalf("response = %#v", writer.response)
+	}
+}
+
+func TestDoHBridgeUsesUpstreamsInOrder(t *testing.T) {
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+	secondCalled := false
+	bridge := &dohBridge{
+		log: newLogger("error"),
+		resolvers: []resolverFunc{
+			func(_ context.Context, request *dns.Msg) (*dns.Msg, error) {
+				response := new(dns.Msg)
+				response.SetReply(request)
+				return response, nil
+			},
+			func(context.Context, *dns.Msg) (*dns.Msg, error) {
+				secondCalled = true
+				return nil, errors.New("must not be called")
+			},
+		},
+	}
+	writer := newCaptureDNSWriter()
+	bridge.ServeDNS(writer, query)
+	if writer.response == nil || writer.response.Rcode != dns.RcodeSuccess {
+		t.Fatalf("response = %#v", writer.response)
+	}
+	if secondCalled {
+		t.Fatal("lower-priority upstream was called after a successful response")
+	}
+}
+
+func TestResolveDoHAddressesUsesConfiguredDNS(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &dns.Server{
+		PacketConn: conn,
+		Handler: dns.HandlerFunc(func(writer dns.ResponseWriter, request *dns.Msg) {
+			response := new(dns.Msg)
+			response.SetReply(request)
+			response.Answer = append(response.Answer, &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   request.Question[0].Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    60,
+				},
+				A: net.ParseIP("198.18.0.42"),
+			})
+			_ = writer.WriteMsg(response)
+		}),
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- server.ActivateAndServe()
+	}()
+	t.Cleanup(func() {
+		_ = server.Shutdown()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("bootstrap DNS server did not stop")
+		}
+	})
+
+	addresses, err := resolveDoHAddresses(context.Background(), conn.LocalAddr().String(), "dns.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0] != "198.18.0.42" {
+		t.Fatalf("addresses = %#v", addresses)
+	}
+}
+
+func TestDoHUpstreamRetriesAfterExponentialBackoff(t *testing.T) {
+	upstream := &dohUpstream{
+		tag:         "test",
+		backoffStep: 1,
+		retryAt:     time.Now().Add(time.Minute),
+	}
+	if _, allowed := upstream.acquire(); allowed {
+		t.Fatal("upstream allowed a request while backoff was active")
+	}
+	upstream.retryAt = time.Now().Add(-time.Millisecond)
+	permit, allowed := upstream.acquire()
+	if !allowed || !permit.probe {
+		t.Fatal("upstream did not allow a half-open retry")
+	}
+	upstream.succeed()
+	if upstream.backoffStep != 0 || !upstream.retryAt.IsZero() || upstream.probing {
+		t.Fatal("successful retry did not close the circuit")
 	}
 }
 

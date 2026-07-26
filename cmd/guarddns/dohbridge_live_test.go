@@ -12,7 +12,12 @@ func TestLiveDoHUpstreams(t *testing.T) {
 	if os.Getenv("GUARDNS_LIVE_DOH_TEST") != "1" {
 		t.Skip("set GUARDNS_LIVE_DOH_TEST=1 to query public DoH upstreams")
 	}
-	for _, upstream := range defaultDoHUpstreams() {
+	cfg := config{}
+	if autoDNS := os.Getenv("GUARDNS_LIVE_AUTO_DNS"); autoDNS != "" {
+		cfg.autoEnabled = true
+		cfg.autoDNS = autoDNS
+	}
+	for _, upstream := range append(autoDoHUpstreams(cfg), directDoHUpstreams()...) {
 		t.Run(upstream.tag+"/signed", func(t *testing.T) {
 			response := liveDoHQuery(t, upstream, "dns.google.")
 			if response.Rcode != dns.RcodeSuccess {

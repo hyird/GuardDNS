@@ -9,8 +9,8 @@ It combines:
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
   validation and caching.
-- An in-process loopback bridge to Cloudflare and 360 DoH over standard HTTPS
-  port 443, reachable without special RouterOS routes.
+- An in-process loopback bridge that prefers NextDNS and Quad9 DoH through
+  Mihomo, with direct Cloudflare and 360 DoH as emergency fallbacks.
 - Optional Mihomo DNS integration for validated fake-IP.
 - Functional Docker health checks and Prometheus runtime metrics.
 
@@ -98,9 +98,15 @@ Mihomo DNS fails, it reuses that same real answer without another lookup.
 Failures use exponential retry delays from `1s` to `5min`; while the circuit is
 open, queries bypass Mihomo immediately. A half-open probe restores forwarding
 automatically after recovery. Set it to `no` to use encrypted real IP only.
-The built-in real-IP path uses two independent providers over authenticated
-DNS-over-HTTPS. The Go process transports DNS wire messages between the
-loopback-only Unbound forwarder and those providers; Unbound validates DNSSEC
+The built-in real-IP path uses independent providers over authenticated
+DNS-over-HTTPS. When `AUTO_FORWARD` is enabled, GuardDNS asks that same Mihomo
+DNS endpoint for the provider's fake-IP and connects over HTTPS with the
+provider hostname still verified by TLS. This keeps global encrypted DNS on
+the Mihomo path without adding SOCKS5 or another setting. NextDNS is preferred,
+then Quad9; failures enter jittered exponential backoff and recover
+automatically. Direct Cloudflare and 360 DoH remain ordered emergency
+fallbacks. The Go process transports DNS wire messages between the
+loopback-only Unbound forwarder and the providers; Unbound validates DNSSEC
 locally before MosDNS may pass an A query to Mihomo.
 
 This intentionally keeps the central
