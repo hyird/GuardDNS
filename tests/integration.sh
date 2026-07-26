@@ -17,7 +17,7 @@ trap cleanup EXIT INT TERM
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   docker inspect -f '{{json .State}}' "$dns_name" >&2 2>/dev/null || true
-  docker logs "$dns_name" >&2 2>/dev/null || true
+  docker logs "$dns_name" >&2 || true
   docker exec "$dns_name" ps -ef >&2 2>/dev/null || true
   docker exec "$dns_name" /usr/local/bin/guarddns-healthcheck >&2 2>/dev/null || true
   if [ -n "${dns_ip:-}" ]; then
@@ -147,6 +147,7 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_for
 
 docker exec "$dns_name" sh -c \
   "grep -q 'forward-addr: 127.0.0.1@5336' /run/guarddns/unbound.conf &&
+   grep -q 'do-not-query-localhost: no' /run/guarddns/unbound.conf &&
    ! grep -R -E 'addr: https://|dial_addr:|forward-addr: (223\\.5\\.5\\.5|119\\.29\\.29\\.29)' /run/guarddns /etc/guarddns"
 
 # Stop the configured Mihomo DNS. Queries must seamlessly reuse their validated

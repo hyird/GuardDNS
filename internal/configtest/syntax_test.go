@@ -79,6 +79,7 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	for _, required := range []string{
 		`module-config: "validator iterator"`,
 		`auto-trust-anchor-file: "/run/guarddns/unbound/root.key"`,
+		"do-not-query-localhost: no",
 		"forward-addr: 127.0.0.1@5336",
 	} {
 		if !strings.Contains(config, required) {
