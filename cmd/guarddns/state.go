@@ -16,8 +16,9 @@ type runtimeState struct {
 
 func newRuntimeState() *runtimeState {
 	return &runtimeState{components: map[string]statewire.Component{
-		"mosdns":  {Enabled: true},
-		"unbound": {Enabled: true},
+		"doh_bridge": {Enabled: true},
+		"mosdns":     {Enabled: true},
+		"unbound":    {Enabled: true},
 	}}
 }
 

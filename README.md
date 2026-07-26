@@ -9,8 +9,8 @@ It combines:
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
   validation and caching.
-- AliDNS and DNSPod DNS-over-TLS upstreams reachable without special
-  RouterOS routes.
+- An in-process loopback bridge to AliDNS and DNSPod DoH over standard HTTPS
+  port 443, reachable without special RouterOS routes.
 - Optional Mihomo DNS integration for validated fake-IP.
 - Functional Docker health checks and Prometheus runtime metrics.
 
@@ -24,7 +24,7 @@ It combines:
 | Fake-IP | A-record existence is checked through encrypted DNS before asking Mihomo for fake-IP |
 | DNSSEC failure | Preserved as `SERVFAIL`, never converted to fake-IP |
 | Cache | Separate CN/secure-real caches; fake-IP is never cached by GuardDNS |
-| Encrypted upstream | Unbound authenticates AliDNS and DNSPod over TLS on port 853 and validates DNSSEC locally |
+| Encrypted upstream | The Go bridge transports Unbound queries over DoH/443; Unbound validates DNSSEC locally |
 | Runtime state | No Redis and no runtime mutation of upstream rule files |
 | Supply chain | Pinned Go module graph, verified rule checksums, CI SBOM and provenance |
 
@@ -33,13 +33,13 @@ The routing policy is intentionally fail-closed:
 ```text
 LAN -> RouterOS -> GuardDNS :53
                      |
-                     +-- known CN -> validating Unbound over DoT
+                     +-- known CN -> validating Unbound -> loopback DoH bridge
                      |                 \-- non-CN or failure -> encrypted real IP
                      |
                      +-- known global / unknown -> encrypted real IP
                                                     \-- optional validated Mihomo fake-IP
 
-Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound over DoT
+Mihomo real DNS upstream -> GuardDNS :5304 -> validating Unbound -> DoH/443
 ```
 
 ## Quick start
@@ -97,8 +97,9 @@ Failures use exponential retry delays from `1s` to `5min`; while the circuit is
 open, queries bypass Mihomo immediately. A half-open probe restores forwarding
 automatically after recovery. Set it to `no` to use encrypted real IP only.
 The built-in real-IP path uses two independent providers over authenticated
-DNS-over-TLS. Unbound validates DNSSEC locally before MosDNS may pass an A
-query to Mihomo.
+DNS-over-HTTPS. The Go process transports DNS wire messages between the
+loopback-only Unbound forwarder and those providers; Unbound validates DNSSEC
+locally before MosDNS may pass an A query to Mihomo.
 
 Logs always go to the container's standard output/error stream and are never
 written to a fixed file. `LOG_LEVEL` controls supervisor, MosDNS, and Unbound
@@ -117,8 +118,9 @@ unhealthy.
 
 Supervisor state is sent to MosDNS through the Unix datagram socket
 `/run/guarddns/supervisor.sock`. This does not create another TCP/UDP listener.
-The only private DNS data path is the existing loopback connection from MosDNS
-to Unbound on `127.0.0.1:5335`; it is not exposed by the image.
+Private DNS data paths are loopback-only: MosDNS to Unbound on
+`127.0.0.1:5335`, and Unbound to the in-process DoH bridge on
+`127.0.0.1:5336`. Neither is exposed by the image.
 
 Prometheus metrics are available at `/metrics` on the fixed container listener
 `0.0.0.0:9091`. The Docker examples expose it only on host loopback:

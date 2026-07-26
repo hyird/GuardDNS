@@ -46,6 +46,12 @@ func main() {
 
 	state := newRuntimeState()
 	go sendStateLoop(ctx, state, supervisorSocket)
+	bridge, err := startDoHBridge(ctx, state, log)
+	if err != nil {
+		log.errorf("encrypted DNS bridge failed to start: %v", err)
+		os.Exit(1)
+	}
+	defer bridge.close()
 
 	var managers sync.WaitGroup
 	managers.Add(1)

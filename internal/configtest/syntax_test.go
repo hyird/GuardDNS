@@ -79,10 +79,7 @@ func TestSecurePathsUseValidatingUnboundOverTLS(t *testing.T) {
 	for _, required := range []string{
 		`module-config: "validator iterator"`,
 		`auto-trust-anchor-file: "/run/guarddns/unbound/root.key"`,
-		`tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"`,
-		"forward-tls-upstream: yes",
-		"forward-addr: 223.5.5.5@853#dns.alidns.com",
-		"forward-addr: 1.12.12.12@853#dot.pub",
+		"forward-addr: 127.0.0.1@5336",
 	} {
 		if !strings.Contains(config, required) {
 			t.Errorf("unbound.conf.tmpl is missing %q", required)

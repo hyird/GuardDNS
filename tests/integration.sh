@@ -133,14 +133,14 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_metrics_collector_query_total{name="s
   || fail "secure listener metrics were not exported"
 printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_component_up{component="unbound"} 1' \
   || fail "Unbound supervisor state was not exported"
+printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_component_up{component="doh_bridge"} 1' \
+  || fail "encrypted bridge state was not exported"
 printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_forward_circuit"}' \
   || fail "AUTO_FORWARD circuit state was not exported"
 
 docker exec "$dns_name" sh -c \
-  "grep -q 'forward-tls-upstream: yes' /run/guarddns/unbound.conf &&
-   grep -q 'forward-addr: 223.5.5.5@853#dns.alidns.com' /run/guarddns/unbound.conf &&
-   grep -q 'forward-addr: 1.12.12.12@853#dot.pub' /run/guarddns/unbound.conf &&
-   ! grep -R -E 'addr: https://|dial_addr:|forward-addr: .+@53([^0-9]|$)' /run/guarddns /etc/guarddns"
+  "grep -q 'forward-addr: 127.0.0.1@5336' /run/guarddns/unbound.conf &&
+   ! grep -R -E 'addr: https://|dial_addr:|forward-addr: (223\\.5\\.5\\.5|119\\.29\\.29\\.29)' /run/guarddns /etc/guarddns"
 
 # Stop the configured Mihomo DNS. Queries must seamlessly reuse their validated
 # real responses; two consecutive failures open the exponential-backoff

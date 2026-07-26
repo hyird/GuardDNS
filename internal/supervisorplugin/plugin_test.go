@@ -50,6 +50,20 @@ func TestHealthStates(t *testing.T) {
 			body:       "degraded",
 		},
 		{
+			name: "encrypted bridge unavailable",
+			snapshot: statewire.Snapshot{
+				Timestamp: time.Now().Unix(),
+				Components: map[string]statewire.Component{
+					"doh_bridge": {Enabled: true},
+					"mosdns":     {Enabled: true, Up: true},
+					"unbound":    {Enabled: true, Up: true},
+				},
+			},
+			receivedAt: time.Now(),
+			status:     http.StatusServiceUnavailable,
+			body:       "bridge",
+		},
+		{
 			name: "healthy",
 			snapshot: statewire.Snapshot{
 				Timestamp: time.Now().Unix(),

@@ -12,7 +12,6 @@ server:
   chroot: ""
   directory: "/run/guarddns/unbound"
   pidfile: "/run/guarddns/unbound/unbound.pid"
-  tls-cert-bundle: "/etc/ssl/certs/ca-certificates.crt"
 
   do-ip4: yes
   do-ip6: no
@@ -72,15 +71,10 @@ server:
 remote-control:
   control-enable: no
 
-# One validating Unbound instance serves both CN classification and the secure
-# real-IP listener. Provider addresses are in mainland networks, so no special
-# RouterOS routes are required. The #hostname suffix enables TLS certificate
-# authentication; no DNS payload is sent to these addresses in plaintext.
+# The Go entry process transports these loopback queries to independent DoH
+# providers over port 443. Unbound remains the single cache and DNSSEC trust
+# authority; the loopback bridge is never exposed by the image.
 forward-zone:
   name: "."
   forward-first: no
-  forward-tls-upstream: yes
-  forward-addr: 223.5.5.5@853#dns.alidns.com
-  forward-addr: 223.6.6.6@853#dns.alidns.com
-  forward-addr: 1.12.12.12@853#dot.pub
-  forward-addr: 120.53.53.53@853#dot.pub
+  forward-addr: 127.0.0.1@5336

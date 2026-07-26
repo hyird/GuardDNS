@@ -101,6 +101,10 @@ func (p *Plugin) health(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unhealthy: mosdns is restarting", http.StatusServiceUnavailable)
 		return
 	}
+	if bridge, ok := snapshot.Components["doh_bridge"]; ok && bridge.Enabled && !bridge.Up {
+		http.Error(w, "unhealthy: encrypted DNS bridge is unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if unbound, ok := snapshot.Components["unbound"]; ok && unbound.Enabled && !unbound.Up {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("degraded: unbound is restarting\n"))
