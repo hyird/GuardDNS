@@ -256,7 +256,11 @@ validation.
 GitHub Actions tests `linux/amd64`, smoke-tests `linux/arm64` and
 `linux/arm/v7`, and publishes a multi-architecture GHCR image with SBOM and
 provenance after successful non-PR runs. Rule archives and the Go module graph
-are checksum/version pinned.
+are checksum/version pinned. Release binaries are stripped and compressed with
+UPX `--best --lzma`; the prepared Alpine filesystem is copied into a scratch
+stage so each platform manifest contains exactly one filesystem layer. CI
+checks that layer count and executes the compressed binaries on every published
+architecture.
 
 Third-party components and data licenses are listed in
 [THIRD_PARTY.md](THIRD_PARTY.md).

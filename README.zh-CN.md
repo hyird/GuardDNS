@@ -242,7 +242,10 @@ fake-IP 快速路径、DNSSEC/NXDOMAIN/NODATA、健康检查、指标、故障�
 
 GitHub Actions 会测试 `linux/amd64`，对 `linux/arm64` 和 `linux/arm/v7`
 执行冒烟测试，并在非 PR 流程全部通过后发布带 SBOM 和 provenance 的多架构
-GHCR 镜像。规则归档和 Go 模块图均通过校验和或版本固定。
+GHCR 镜像。规则归档和 Go 模块图均通过校验和或版本固定。发布二进制经过
+UPX `--best --lzma` 压缩；准备好的 Alpine 文件系统整体复制到 scratch 阶段，
+因此每个平台清单严格只有一个文件系统层。CI 会检查层数，并在所有发布架构上
+实际执行压缩后的二进制。
 
 第三方组件和数据许可证见
 [THIRD_PARTY.zh-CN.md](THIRD_PARTY.zh-CN.md)。

@@ -12,6 +12,8 @@ The GuardDNS image contains third-party programs, libraries, and data:
   GPL-3.0.
 - [Loyalsoldier clash-rules](https://github.com/Loyalsoldier/clash-rules),
   GPL-3.0.
+- [UPX](https://github.com/upx/upx) compresses the Go executables during the
+  image build. The standalone UPX program is not included in the runtime image.
 - Alpine Linux packages, under their respective licenses.
 
 The MosDNS source version and complete Go dependency graph are pinned by

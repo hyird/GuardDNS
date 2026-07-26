@@ -12,6 +12,8 @@ GuardDNS 镜像包含以下第三方程序、库和数据：
   GPL-3.0；
 - [Loyalsoldier clash-rules](https://github.com/Loyalsoldier/clash-rules)，
   GPL-3.0；
+- [UPX](https://github.com/upx/upx) 在镜像构建阶段压缩 Go 可执行文件，
+  最终运行镜像不包含独立的 UPX 程序；
 - Alpine Linux 软件包，遵循各自的许可证。
 
 MosDNS 源码版本和完整 Go 依赖图由 `go.mod`/`go.sum` 固定。域名规则通过

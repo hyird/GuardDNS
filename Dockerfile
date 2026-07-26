@@ -11,6 +11,7 @@ ARG TARGETVARIANT
 ARG GUARDNS_VERSION=v5.3.4-guarddns
 
 WORKDIR /src
+RUN apk add --no-cache upx
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
@@ -27,6 +28,8 @@ RUN set -eux; \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$target_goarm" \
       go build -trimpath -ldflags="-s -w -X main.version=${GUARDNS_VERSION}" \
       -o /out/guarddns ./cmd/guarddns
+RUN upx --best --lzma /out/mosdns /out/guarddns \
+    && upx -t /out/mosdns /out/guarddns
 
 FROM alpine:${ALPINE_VERSION} AS rules-downloader
 
@@ -75,17 +78,18 @@ RUN set -eux; \
     test -s /out/proxy.txt; \
     test -s /out/cncidr.txt
 
-FROM alpine:${ALPINE_VERSION}
+FROM scratch AS runtime-assets
+
+COPY --from=go-builder --chmod=0755 /out/mosdns /usr/local/bin/mosdns
+COPY --from=go-builder --chmod=0755 /out/guarddns /usr/local/bin/guarddns
+COPY --from=rules-downloader /out/ /usr/share/guarddns/rules/
+COPY config/ /etc/guarddns/
+COPY --chmod=0755 scripts/healthcheck.sh /usr/local/bin/guarddns-healthcheck
+
+FROM alpine:${ALPINE_VERSION} AS runtime-root
 
 ARG UNBOUND_VERSION=1.25.1
-ARG MOSDNS_VERSION=5.3.4
 ARG ALPINE_MIRROR
-
-LABEL org.opencontainers.image.title="GuardDNS" \
-      org.opencontainers.image.description="Fail-closed anti-pollution split DNS for RouterOS and Mihomo" \
-      org.opencontainers.image.source="https://github.com/hyird/GuardDNS" \
-      org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.version="${MOSDNS_VERSION}"
 
 RUN if [ -n "$ALPINE_MIRROR" ]; then \
       sed -i "s|https://dl-cdn.alpinelinux.org/alpine|$ALPINE_MIRROR|g" /etc/apk/repositories; \
@@ -99,17 +103,9 @@ RUN if [ -n "$ALPINE_MIRROR" ]; then \
     && printf '%s\n' 'Asia/Shanghai' > /etc/timezone \
     && mkdir -p /etc/guarddns /usr/share/guarddns/rules /run/guarddns/unbound /data
 
-COPY --from=go-builder /out/mosdns /usr/local/bin/mosdns
-COPY --from=go-builder /out/guarddns /usr/local/bin/guarddns
-COPY --from=rules-downloader /out/ /usr/share/guarddns/rules/
-COPY config/ /etc/guarddns/
-COPY scripts/healthcheck.sh /usr/local/bin/guarddns-healthcheck
+COPY --from=runtime-assets / /
 
-RUN chmod 0755 \
-      /usr/local/bin/guarddns \
-      /usr/local/bin/mosdns \
-      /usr/local/bin/guarddns-healthcheck \
-    && unbound -V | grep -F "Version ${UNBOUND_VERSION}" \
+RUN unbound -V | grep -F "Version ${UNBOUND_VERSION}" \
     && cp /usr/share/dnssec-root/trusted-key.key /run/guarddns/unbound/root.key \
     && chown -R unbound:unbound /run/guarddns/unbound \
     && mkdir -p /run/guarddns/unbound-recursive \
@@ -120,6 +116,22 @@ RUN chmod 0755 \
          > /tmp/unbound-recursive.conf \
     && unbound-checkconf /tmp/unbound-recursive.conf >/dev/null \
     && rm -f /tmp/unbound.conf /tmp/unbound-recursive.conf /run/guarddns/unbound/root.key
+
+FROM scratch
+
+ARG MOSDNS_VERSION=5.3.4
+
+LABEL org.opencontainers.image.title="GuardDNS" \
+      org.opencontainers.image.description="Fail-closed anti-pollution split DNS for RouterOS and Mihomo" \
+      org.opencontainers.image.source="https://github.com/hyird/GuardDNS" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${MOSDNS_VERSION}" \
+      io.guarddns.image.filesystem-layers="1" \
+      io.guarddns.image.upx="--best --lzma"
+
+# Squash the prepared Alpine root into one final filesystem layer. Build-only
+# package, validation, and asset layers stay out of the published manifest.
+COPY --from=runtime-root / /
 
 ENV AUTO_FORWARD=no \
     LOG_LEVEL=warn

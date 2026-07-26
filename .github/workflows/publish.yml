@@ -38,6 +38,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify optimized image shape
+        run: |
+          layers="$(docker image inspect guarddns:test --format '{{len .RootFS.Layers}}')"
+          size="$(docker image inspect guarddns:test --format '{{.Size}}')"
+          test "$layers" -eq 1
+          printf 'filesystem_layers=%s image_size_bytes=%s\n' "$layers" "$size"
+
       - name: Run integration tests
         run: sh tests/integration.sh guarddns:test
 
