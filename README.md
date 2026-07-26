@@ -9,7 +9,7 @@ It combines:
 - MosDNS 5.3.4 for routing, validation gates, and isolated caches.
 - Alpine-packaged Unbound 1.25.1 for encrypted real-IP DNS with local DNSSEC
   validation and caching.
-- An in-process loopback bridge to AliDNS and DNSPod DoH over standard HTTPS
+- An in-process loopback bridge to Cloudflare and 360 DoH over standard HTTPS
   port 443, reachable without special RouterOS routes.
 - Optional Mihomo DNS integration for validated fake-IP.
 - Functional Docker health checks and Prometheus runtime metrics.

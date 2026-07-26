@@ -16,7 +16,14 @@ trap cleanup EXIT INT TERM
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
+  docker inspect -f '{{json .State}}' "$dns_name" >&2 2>/dev/null || true
   docker logs "$dns_name" >&2 2>/dev/null || true
+  docker exec "$dns_name" ps -ef >&2 2>/dev/null || true
+  docker exec "$dns_name" /usr/local/bin/guarddns-healthcheck >&2 2>/dev/null || true
+  if [ -n "${dns_ip:-}" ]; then
+    docker exec "$client_name" \
+      dig +time=3 +tries=1 "@$dns_ip" dns.google A >&2 2>/dev/null || true
+  fi
   exit 1
 }
 

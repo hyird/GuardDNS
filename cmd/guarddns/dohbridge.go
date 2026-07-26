@@ -41,20 +41,7 @@ func startDoHBridge(ctx context.Context, state *runtimeState, log *logger) (*doh
 	bridge := &dohBridge{
 		log: log,
 	}
-	for _, upstream := range []*dohUpstream{
-		newDoHUpstream(
-			"alidns",
-			"https://dns.alidns.com/dns-query",
-			"dns.alidns.com",
-			[]string{"223.5.5.5", "223.6.6.6"},
-		),
-		newDoHUpstream(
-			"dnspod",
-			"https://doh.pub/dns-query",
-			"doh.pub",
-			[]string{"1.12.12.12", "120.53.53.53"},
-		),
-	} {
+	for _, upstream := range defaultDoHUpstreams() {
 		bridge.resolvers = append(bridge.resolvers, upstream.exchange)
 	}
 
@@ -92,6 +79,29 @@ func startDoHBridge(ctx context.Context, state *runtimeState, log *logger) (*doh
 	}()
 	log.infof("encrypted DoH bridge ready on %s", dohBridgeAddr)
 	return bridge, nil
+}
+
+func defaultDoHUpstreams() []*dohUpstream {
+	return []*dohUpstream{
+		newDoHUpstream(
+			"cloudflare",
+			"https://cloudflare-dns.com/dns-query",
+			"cloudflare-dns.com",
+			[]string{"104.16.248.249", "104.16.249.249"},
+		),
+		newDoHUpstream(
+			"360",
+			"https://doh.360.cn/dns-query",
+			"doh.360.cn",
+			[]string{
+				"101.226.4.6",
+				"218.30.118.6",
+				"101.91.111.153",
+				"36.99.170.86",
+				"106.63.24.74",
+			},
+		),
+	}
 }
 
 func newDoHUpstream(tag, url, serverName string, dialIPs []string) *dohUpstream {
