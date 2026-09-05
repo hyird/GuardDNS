@@ -3,3 +3,7 @@ full:cloudflare-dns.com
 full:dns.alidns.com
 full:doh.pub
 full:doh.360.cn
+domain:steamcontent.com
+domain:steamserver.net
+domain:steamusercontent.com
+full:client-download.steampowered.com

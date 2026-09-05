@@ -249,7 +249,7 @@ func TestOnlyThreeSemanticDefaultDomainLists(t *testing.T) {
 }
 
 func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
-	path := filepath.Join("..", "..", "config", "defaults", "domestic.txt")
+	path := filepath.Join("..", "..", "config", "defaults", "real-ip.txt")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

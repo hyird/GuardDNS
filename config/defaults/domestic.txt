@@ -1,5 +1,1 @@
 
-domain:steamcontent.com
-domain:steamserver.net
-domain:steamusercontent.com
-full:client-download.steampowered.com
