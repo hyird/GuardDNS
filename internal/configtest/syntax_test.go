@@ -248,6 +248,24 @@ func TestOnlyThreeSemanticDefaultDomainLists(t *testing.T) {
 	}
 }
 
+func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
+	path := filepath.Join("..", "..", "config", "defaults", "domestic.txt")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"domain:steamcontent.com",
+		"domain:steamserver.net",
+		"domain:steamusercontent.com",
+		"full:client-download.steampowered.com",
+	} {
+		if !strings.Contains(string(content), required) {
+			t.Errorf("domestic.txt is missing Steam direct rule %q", required)
+		}
+	}
+}
+
 func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
 	if err != nil {
