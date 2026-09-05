@@ -261,6 +261,17 @@ func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
 		"domain:client-download.steampowered.com",
 		"domain:steam-content-dnld-1.apac-1-cdn.cqloud.com",
 		"domain:steampipe.akamaized.net",
+		"domain:cm.steampowered.com",
+		"domain:st.dl.eccdnx.com",
+		"domain:st.dl.bscstorage.net",
+		"domain:st.dl.pinyuncloud.com",
+		"domain:dl.steam.clngaa.com",
+		"domain:cdn-qc.content.steamchina.com",
+		"domain:cdn-ali.content.steamchina.com",
+		"domain:xz.pphimalayanrt.com",
+		"domain:lv.queniujq.cn",
+		"domain:alibaba.cdn.steampipe.steamcontent.com",
+		"domain:steampipe.steamcontent.tnkjmec.com",
 	} {
 		if !strings.Contains(string(content), required) {
 			t.Errorf("domestic.txt is missing Steam direct rule %q", required)
