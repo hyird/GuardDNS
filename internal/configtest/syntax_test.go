@@ -211,8 +211,8 @@ func TestThreeLogicalDomainMappings(t *testing.T) {
 	if realIP < 0 || overseas < 0 || domestic < 0 || unknown < 0 {
 		t.Fatal("main sequence is missing a logical mapping")
 	}
-	if !(realIP < overseas && overseas < domestic && domestic < unknown) {
-		t.Error("logical mapping priority is not real-IP -> overseas -> domestic -> unknown")
+	if !(realIP < domestic && domestic < overseas && overseas < unknown) {
+		t.Error("logical mapping priority is not real-IP -> domestic -> overseas -> unknown")
 	}
 }
 

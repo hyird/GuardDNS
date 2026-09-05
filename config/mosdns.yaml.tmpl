@@ -153,17 +153,17 @@ plugins:
           - qname $real_ip_domains
         exec: goto secure_real_path
       - matches:
-          - qname $overseas_domains
-        exec: guarddns_decision overseas
-      - matches:
-          - qname $overseas_domains
-        exec: goto foreign_path
-      - matches:
           - qname $domestic_domains
         exec: guarddns_decision domestic
       - matches:
           - qname $domestic_domains
         exec: goto domestic_path
+      - matches:
+          - qname $overseas_domains
+        exec: guarddns_decision overseas
+      - matches:
+          - qname $overseas_domains
+        exec: goto foreign_path
       # The three mappings are fast paths, not the final classifier. Unknown
       # names are resolved once and classified by the real response, matching
       # the core PaoPaoDNS CN/NON-CN behavior.
