@@ -258,9 +258,9 @@ func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
 		"domain:steamcontent.com",
 		"domain:steamserver.net",
 		"domain:steamusercontent.com",
-		"full:client-download.steampowered.com",
+		"domain:client-download.steampowered.com",
 		"domain:steam-content-dnld-1.apac-1-cdn.cqloud.com",
-		"full:steampipe.akamaized.net",
+		"domain:steampipe.akamaized.net",
 	} {
 		if !strings.Contains(string(content), required) {
 			t.Errorf("domestic.txt is missing Steam direct rule %q", required)
