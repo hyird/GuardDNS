@@ -11,6 +11,7 @@ import (
 	_ "github.com/hyird/GuardDNS/internal/circuitplugin"
 	_ "github.com/hyird/GuardDNS/internal/decisionplugin"
 	_ "github.com/hyird/GuardDNS/internal/requestmetricsplugin"
+	_ "github.com/hyird/GuardDNS/internal/rulesplugin"
 	_ "github.com/hyird/GuardDNS/internal/supervisorplugin"
 	_ "github.com/hyird/GuardDNS/internal/tcpserverplugin"
 	"github.com/spf13/cobra"

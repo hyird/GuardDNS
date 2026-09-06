@@ -18,27 +18,19 @@ plugins:
     args:
       socket: /run/guarddns/supervisor.sock
 
-  # Operators maintain exactly three semantic domain mappings. Version-pinned
-  # built-in rules extend the domestic and overseas sets internally.
-  - tag: real_ip_domains
-    type: domain_set
+  # Operators maintain two semantic domain mappings. Explicit direct names
+  # always resolve through the encrypted, DNSSEC-validating real-IP path.
+  - tag: direct_domains
+    type: guarddns_rule_file
     args:
-      files:
-        - /data/real-ip.txt
+      file: /data/direct.txt
 
-  - tag: overseas_domains
-    type: domain_set
+  - tag: proxy_domains
+    type: guarddns_rule_file
     args:
-      files:
-        - /data/overseas.txt
+      file: /data/proxy.txt
+      includes:
         - /usr/share/guarddns/rules/proxy.txt
-
-  - tag: domestic_domains
-    type: domain_set
-    args:
-      files:
-        - /data/domestic.txt
-        - /usr/share/guarddns/rules/direct.txt
 
   - tag: private_domains
     type: domain_set
@@ -95,14 +87,6 @@ plugins:
       threshold: 2000
       always_standby: false
 
-  # Domestic-list names are trusted declarations and use the resolver that
-  # answers from this network. If it is down, classify_lookup still degrades to
-  # encrypted resolution.
-  - tag: domestic_path
-    type: sequence
-    args:
-      - exec: $classify_lookup
-
   - tag: classify_path
     type: sequence
     args:
@@ -147,24 +131,18 @@ plugins:
           - qname $private_domains
         exec: reject 3
       - matches:
-          - qname $real_ip_domains
-        exec: guarddns_decision real_ip
+          - qname $direct_domains
+        exec: guarddns_decision direct
       - matches:
-          - qname $real_ip_domains
+          - qname $direct_domains
         exec: goto secure_real_path
       - matches:
-          - qname $domestic_domains
-        exec: guarddns_decision domestic
+          - qname $proxy_domains
+        exec: guarddns_decision proxy
       - matches:
-          - qname $domestic_domains
-        exec: goto domestic_path
-      - matches:
-          - qname $overseas_domains
-        exec: guarddns_decision overseas
-      - matches:
-          - qname $overseas_domains
+          - qname $proxy_domains
         exec: goto foreign_path
-      # The three mappings are fast paths, not the final classifier. Unknown
+      # The two mappings are fast paths, not the final classifier. Unknown
       # names are resolved once and classified by the real response, matching
       # the core PaoPaoDNS CN/NON-CN behavior.
       - exec: guarddns_decision unknown

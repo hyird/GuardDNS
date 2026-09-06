@@ -14,6 +14,7 @@ import (
 	_ "github.com/hyird/GuardDNS/internal/circuitplugin"
 	_ "github.com/hyird/GuardDNS/internal/decisionplugin"
 	_ "github.com/hyird/GuardDNS/internal/requestmetricsplugin"
+	_ "github.com/hyird/GuardDNS/internal/rulesplugin"
 	_ "github.com/hyird/GuardDNS/internal/supervisorplugin"
 	_ "github.com/hyird/GuardDNS/internal/tcpserverplugin"
 )
@@ -45,11 +46,9 @@ func TestRuntimeConfigsInitialize(t *testing.T) {
 				"__LOG_LEVEL__", "error",
 				"/run/guarddns/foreign.yaml", foreignPath,
 				"/run/guarddns/supervisor.sock", filepath.Join(dir, "supervisor.sock"),
-				"/data/real-ip.txt", rules,
-				"/data/overseas.txt", rules,
-				"/data/domestic.txt", rules,
+				"/data/direct.txt", rules,
+				"/data/proxy.txt", rules,
 				"/usr/share/guarddns/rules/proxy.txt", rules,
-				"/usr/share/guarddns/rules/direct.txt", rules,
 				"/usr/share/guarddns/rules/cncidr.txt", cidr,
 				"http: '0.0.0.0:5308'", "http: ''",
 				"listen: '0.0.0.0:53'", "listen: '127.0.0.1:0'",

@@ -1,4 +1,8 @@
-
+full:dns.google
+full:cloudflare-dns.com
+full:dns.alidns.com
+full:doh.pub
+full:doh.360.cn
 domain:steamcontent.com
 domain:steamserver.net
 domain:steamusercontent.com
@@ -18,3 +22,17 @@ domain:xz.pphimalayanrt.com
 domain:lv.queniujq.cn
 domain:alibaba.cdn.steampipe.steamcontent.com
 domain:steampipe.steamcontent.tnkjmec.com
+domain:aaplimg.com
+domain:apple-cloudkit.com
+domain:apple-dns.net
+domain:apple-mapkit.com
+domain:apple.com
+domain:applemusic.com
+domain:appstore.com
+domain:cdn-apple.com
+domain:icloud-content.com
+domain:icloud.com
+domain:itunes.com
+domain:mac.com
+domain:me.com
+domain:mzstatic.com

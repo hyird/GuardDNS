@@ -55,8 +55,7 @@ RUN set -eux; \
         -o /tmp/rules.zip; \
     fi; \
     echo "${RULES_SHA256}  /tmp/rules.zip" | sha256sum -c -; \
-    unzip -j /tmp/rules.zip direct-list.txt proxy-list.txt -d /tmp/rules; \
-    cp /tmp/rules/direct-list.txt /out/direct.txt; \
+    unzip -j /tmp/rules.zip proxy-list.txt -d /tmp/rules; \
     cp /tmp/rules/proxy-list.txt /out/proxy.txt; \
     if [ -s /vendor/cncidr.txt ]; then \
       cp /vendor/cncidr.txt /tmp/cncidr.yaml; \
@@ -73,7 +72,6 @@ RUN set -eux; \
       -e "s/'[[:space:]]*$//" \
       -e 's/\r$//' \
       /tmp/cncidr.yaml > /out/cncidr.txt; \
-    test -s /out/direct.txt; \
     test -s /out/proxy.txt; \
     test -s /out/cncidr.txt
 

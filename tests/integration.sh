@@ -32,14 +32,13 @@ fail() {
 }
 
 docker network create "$network" >/dev/null
-: >"$rule_overrides/direct.txt"
 : >"$rule_overrides/proxy.txt"
 
 # A classified-global name must reach Mihomo without an encrypted real lookup
 # first, so the list is exercised with a name that has no real answer at all.
 mkdir -p "$rule_overrides/data"
 printf 'full:fakeip-first.test\nfull:www.wikipedia.org\n' \
-  >"$rule_overrides/data/overseas.txt"
+  >"$rule_overrides/data/proxy.txt"
 
 docker image inspect -f '{{json .Config.Healthcheck.Test}}' "$image" \
   | grep -q 'guarddns-healthcheck' \
@@ -64,7 +63,6 @@ mock_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{
 docker run -d \
   --name "$dns_name" \
   --network "$network" \
-  -v "$rule_overrides/direct.txt:/usr/share/guarddns/rules/direct.txt:ro" \
   -v "$rule_overrides/proxy.txt:/usr/share/guarddns/rules/proxy.txt:ro" \
   -v "$rule_overrides/data:/data" \
   -e "AUTO_FORWARD=$mock_ip:5353" \
@@ -96,8 +94,8 @@ while [ "$i" -lt 40 ]; do
 done
 [ "$ready" -eq 1 ] || fail "GuardDNS did not become ready"
 
-# direct.txt/proxy.txt are deliberately empty in this container. This verifies
-# the PaoPaoDNS-style final classifier rather than a domain-list fast path.
+# proxy.txt is deliberately empty in this container. This verifies the
+# PaoPaoDNS-style final classifier rather than a domain-list fast path.
 cn_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" www.12306.cn A)
 [ -n "$cn_answer" ] || fail "mainland domain returned no A record"
 printf '%s\n' "$cn_answer" | grep -q '198\.18\.0\.42' \
@@ -107,12 +105,38 @@ global_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip
 printf '%s\n' "$global_answer" | grep -qx '198.18.0.42' \
   || fail "global domain did not use validated Mihomo fake-IP"
 
-# A name on the overseas list goes straight to Mihomo. .test never resolves, so
+# A name in proxy.txt goes straight to Mihomo. .test never resolves, so
 # an answer here proves no encrypted real lookup gated the fake IP.
 fakeip_first_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short "@$dns_ip" fakeip-first.test A)
 printf '%s\n' "$fakeip_first_answer" | grep -qx '198.18.0.42' \
-  || fail "overseas domain did not reach Mihomo directly: $fakeip_first_answer"
+  || fail "proxy domain did not reach Mihomo directly: $fakeip_first_answer"
+
+# Rule files are watched in-process. A valid new proxy rule must take effect
+# without restarting MosDNS, while malformed entries are removed from disk.
+mosdns_pid_before_reload=$(docker exec "$dns_name" pidof mosdns)
+docker exec "$dns_name" sh -c \
+  'printf "full:fakeip-first.test\nfull:hot-reload.test\nfull:bad domain\n" > /data/proxy.txt'
+hot_reload_answer=
+i=0
+while [ "$i" -lt 10 ]; do
+  candidate=$(docker exec "$client_name" \
+    dig +time=1 +tries=1 +short "@$dns_ip" hot-reload.test A || true)
+  if printf '%s\n' "$candidate" | grep -qx '198.18.0.42'; then
+    hot_reload_answer=$candidate
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+[ "$hot_reload_answer" = '198.18.0.42' ] \
+  || fail "proxy rule was not hot-reloaded"
+docker exec "$dns_name" sh -c \
+  'grep -qx "full:hot-reload.test" /data/proxy.txt && ! grep -q "bad domain" /data/proxy.txt' \
+  || fail "invalid proxy rule was not filtered"
+mosdns_pid_after_reload=$(docker exec "$dns_name" pidof mosdns)
+[ "$mosdns_pid_after_reload" = "$mosdns_pid_before_reload" ] \
+  || fail "MosDNS restarted instead of hot-reloading rules"
 
 control_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" dns.google A)
 [ -n "$control_answer" ] || fail "real-IP domain returned no A record"
@@ -165,7 +189,7 @@ printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_component_up{component="doh_
   || fail "encrypted bridge state was not exported"
 printf '%s\n' "$metrics" | grep -q 'mosdns_guarddns_circuit_state{name="auto_forward_circuit"}' \
   || fail "AUTO_FORWARD circuit state was not exported"
-for decision in real_ip overseas classified_domestic classified_overseas; do
+for decision in direct proxy classified_domestic classified_overseas; do
   printf '%s\n' "$metrics" \
     | grep -q "mosdns_guarddns_decisions_total{decision=\"$decision\"}" \
     || fail "domain mapping decision $decision was not exported"
@@ -185,14 +209,14 @@ cached_failover_answer=$(docker exec "$client_name" \
 [ -n "$cached_failover_answer" ] || fail "cached validation result was not reused"
 printf '%s\n' "$cached_failover_answer" | grep -q '198\.18\.0\.42' \
   && fail "GuardDNS cached a fake-IP response after AUTO_FORWARD stopped"
-# The overseas path has no pre-resolved answer to reuse, so it must fall
+# The proxy path has no pre-resolved answer to reuse, so it must fall
 # back to encrypted real DNS on its own once Mihomo is gone.
 fakeip_first_failover=$(docker exec "$client_name" \
   dig +time=5 +tries=1 +short "@$dns_ip" www.wikipedia.org A)
 [ -n "$fakeip_first_failover" ] \
-  || fail "overseas domain returned nothing after AUTO_FORWARD stopped"
+  || fail "proxy domain returned nothing after AUTO_FORWARD stopped"
 printf '%s\n' "$fakeip_first_failover" | grep -q '198\.18\.0\.42' \
-  && fail "overseas domain returned a stale fake-IP after AUTO_FORWARD stopped"
+  && fail "proxy domain returned a stale fake-IP after AUTO_FORWARD stopped"
 
 failover_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short "@$dns_ip" www.youtube.com A)

@@ -38,14 +38,12 @@ type config struct {
 }
 
 type domainListSpec struct {
-	name   string
-	legacy string
+	name string
 }
 
 var domainListSpecs = []domainListSpec{
-	{name: "real-ip.txt", legacy: "force-secure.txt"},
-	{name: "overseas.txt", legacy: "force-fakeip.txt"},
-	{name: "domestic.txt", legacy: "force-direct.txt"},
+	{name: "direct.txt"},
+	{name: "proxy.txt"},
 }
 
 func loadConfig() (config, error) {
@@ -208,16 +206,6 @@ func prepareDomainLists(dataPath, defaultsPath string) error {
 	for _, spec := range domainListSpecs {
 		dst := filepath.Join(dataPath, spec.name)
 		if _, err := os.Stat(dst); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-
-		legacy := filepath.Join(dataPath, spec.legacy)
-		if _, err := os.Stat(legacy); err == nil {
-			if err := os.Rename(legacy, dst); err != nil {
-				return fmt.Errorf("migrate %s to %s: %w", spec.legacy, spec.name, err)
-			}
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err

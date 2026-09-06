@@ -13,7 +13,7 @@ ordinary Docker hosts. It combines:
 - Independent child-process supervision and functional health checks.
 
 IPv6 answers are disabled. Runtime policy is controlled by two environment
-variables and three persistent domain lists. There is no Redis, and rule
+variables and two persistent domain lists. There is no Redis, and bundled rule
 sources are not downloaded or refreshed at runtime.
 
 ## Request flow
@@ -32,16 +32,14 @@ Mihomo real-DNS lookup -> :5304 -> :5306 -> :5307 -> DoH/443
 Requests are evaluated in this order:
 
 1. Reject AAAA and private names.
-2. Apply the real-IP mapping.
-3. Apply the overseas mapping.
-4. Apply the domestic mapping.
-5. Classify unknown names from their recursive A response using `cncidr.txt`.
+2. Apply the direct mapping.
+3. Apply the proxy mapping.
+4. Classify unknown names from their recursive A response using `cncidr.txt`.
 
 | Decision | Result |
 | --- | --- |
-| Real IP | Encrypted, DNSSEC-validated real address |
-| Overseas | Mihomo fake-IP when enabled; encrypted real address on failure or in secure-only mode |
-| Domestic | Trusted local recursive answer |
+| Direct | Encrypted, DNSSEC-validated real address |
+| Proxy | Mihomo fake-IP when enabled; encrypted real address on failure or in secure-only mode |
 | Unknown name | Recursive CN answer, or a discarded and re-resolved encrypted non-CN answer |
 | AAAA | Empty successful response |
 | Private name | `NXDOMAIN` |
@@ -97,12 +95,12 @@ supported. GuardDNS uses TCP for this DNS hop.
 
 When Mihomo is enabled:
 
-- overseas-mapped A queries go directly to Mihomo;
-- domestic-mapped queries use the local recursive resolver;
+- `proxy.txt`-mapped A queries go directly to Mihomo;
+- `direct.txt`-mapped queries always use the encrypted, DNSSEC-validating real resolver;
 - unknown names reach Mihomo only after their real response proves non-CN;
 - a validated unknown-name response is reused for fallback with a five-second
   TTL;
-- an overseas-mapped name without a saved real response falls back to a new
+- a `proxy.txt`-mapped name without a saved real response falls back to a new
   encrypted lookup;
 - five consecutive failures open the circuit; each query has two 800 ms
   attempts, and jittered retry delay is capped at 30 seconds;
@@ -181,22 +179,21 @@ Never expose port `5308` to an untrusted network.
 
 ## Custom rules
 
-GuardDNS exposes three semantic domain mappings:
+GuardDNS exposes two domain mappings:
 
 | Mapping | User-maintained file | Built-in base | Result |
 | --- | --- | --- | --- |
-| Real IP | `real-ip.txt` | None | Encrypted real address, bypassing fake-IP |
-| Overseas | `overseas.txt` | Pinned proxy rules | Mihomo fake-IP with encrypted real fallback |
-| Domestic | `domestic.txt` | Pinned direct rules | Trusted local recursive answer |
+| Direct | `direct.txt` | None | Encrypted, DNSSEC-validated real address, bypassing fake-IP |
+| Proxy | `proxy.txt` | Pinned proxy rules | Mihomo fake-IP with encrypted real fallback |
 
-These three `/data` files contain domain rules only; IP addresses and CIDRs do
-not belong in them. On first startup after an upgrade, the legacy
-`force-secure.txt`, `force-fakeip.txt`, and `force-direct.txt` names are renamed
-automatically when their semantic replacement does not yet exist.
+These two `/data` files contain domain rules only; IP addresses and CIDRs do
+not belong in them. `real-ip.txt`, `overseas.txt`, and `domestic.txt` are not
+migrated automatically; merge any rules you need into `direct.txt` or
+`proxy.txt` before upgrading.
 
-The bundled proxy/direct rules and `cncidr.txt` are version-pinned internal
-data, not operator-maintained lists. `cncidr.txt` is an IP range database used
-only to classify unknown responses.
+The bundled proxy rules and `cncidr.txt` are version-pinned internal data, not
+operator-maintained lists. `cncidr.txt` is an IP range database used only to
+classify unknown responses.
 
 Rules use MosDNS domain syntax:
 
@@ -207,8 +204,13 @@ keyword:example
 regexp:^api[0-9]+\.example\.com$
 ```
 
-Restart the container after editing rule files. The writable DNSSEC trust
-anchor is stored under `/run/guarddns/unbound`, not in `/data`.
+MosDNS continuously watches `direct.txt` and `proxy.txt`. Saved changes are
+hot-reloaded after a roughly 200 ms debounce without restarting the container
+or DNS listeners. An empty file clears its rules; comments, blank lines, and
+invalid rules are removed. If an edit contains only invalid rules, the file is
+restored to its previous valid content so active policy is not lost. The
+writable DNSSEC trust anchor is stored under `/run/guarddns/unbound`, not in
+`/data`.
 
 ## RouterOS and Mihomo
 
@@ -237,7 +239,7 @@ dns:
 
 Keep `proxy-server-nameserver` independent from GuardDNS so Mihomo can resolve
 proxy node hostnames during bootstrap. Add subscription and control-plane names
-to both `real-ip.txt` and Mihomo's `fake-ip-filter`.
+to both `direct.txt` and Mihomo's `fake-ip-filter`.
 
 ## Validation and publishing
 

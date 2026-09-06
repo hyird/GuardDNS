@@ -167,30 +167,30 @@ func TestObservabilityPluginsAreWiredIntoEveryRuntimeMode(t *testing.T) {
 	}
 }
 
-func TestThreeLogicalDomainMappings(t *testing.T) {
+func TestTwoLogicalDomainMappings(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	config := string(source)
 	for _, required := range []string{
-		"tag: real_ip_domains",
-		"/data/real-ip.txt",
-		"tag: overseas_domains",
-		"/data/overseas.txt",
+		"tag: direct_domains",
+		"type: guarddns_rule_file",
+		"/data/direct.txt",
+		"tag: proxy_domains",
+		"/data/proxy.txt",
 		"/usr/share/guarddns/rules/proxy.txt",
-		"tag: domestic_domains",
-		"/data/domestic.txt",
-		"/usr/share/guarddns/rules/direct.txt",
-		"exec: guarddns_decision real_ip",
-		"exec: guarddns_decision overseas",
-		"exec: guarddns_decision domestic",
+		"exec: guarddns_decision direct",
+		"exec: guarddns_decision proxy",
 	} {
 		if !strings.Contains(config, required) {
 			t.Errorf("mosdns.yaml.tmpl is missing logical mapping %q", required)
 		}
 	}
 	for _, obsolete := range []string{
+		"tag: real_ip_domains",
+		"tag: overseas_domains",
+		"tag: domestic_domains",
 		"tag: force_secure_domains",
 		"tag: force_fakeip_domains",
 		"tag: force_direct_domains",
@@ -204,28 +204,26 @@ func TestThreeLogicalDomainMappings(t *testing.T) {
 	}
 
 	main := config[strings.Index(config, "tag: main_sequence"):]
-	realIP := strings.Index(main, "qname $real_ip_domains")
-	overseas := strings.Index(main, "qname $overseas_domains")
-	domestic := strings.Index(main, "qname $domestic_domains")
+	direct := strings.Index(main, "qname $direct_domains")
+	proxy := strings.Index(main, "qname $proxy_domains")
 	unknown := strings.Index(main, "guarddns_decision unknown")
-	if realIP < 0 || overseas < 0 || domestic < 0 || unknown < 0 {
+	if direct < 0 || proxy < 0 || unknown < 0 {
 		t.Fatal("main sequence is missing a logical mapping")
 	}
-	if !(realIP < domestic && domestic < overseas && overseas < unknown) {
-		t.Error("logical mapping priority is not real-IP -> domestic -> overseas -> unknown")
+	if !(direct < proxy && proxy < unknown) {
+		t.Error("logical mapping priority is not direct -> proxy -> unknown")
 	}
 }
 
-func TestOnlyThreeSemanticDefaultDomainLists(t *testing.T) {
+func TestOnlyTwoSemanticDefaultDomainLists(t *testing.T) {
 	defaultsPath := filepath.Join("..", "..", "config", "defaults")
 	entries, err := os.ReadDir(defaultsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected := map[string]bool{
-		"real-ip.txt":  true,
-		"overseas.txt": true,
-		"domestic.txt": true,
+		"direct.txt": true,
+		"proxy.txt":  true,
 	}
 	if len(entries) != len(expected) {
 		t.Fatalf("default domain list count = %d, want %d", len(entries), len(expected))
@@ -248,8 +246,8 @@ func TestOnlyThreeSemanticDefaultDomainLists(t *testing.T) {
 	}
 }
 
-func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
-	path := filepath.Join("..", "..", "config", "defaults", "domestic.txt")
+func TestSteamDownloadDomainsUseDirectPath(t *testing.T) {
+	path := filepath.Join("..", "..", "config", "defaults", "direct.txt")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +274,35 @@ func TestSteamDownloadDomainsUseDomesticPath(t *testing.T) {
 		"domain:steampipe.steamcontent.tnkjmec.com",
 	} {
 		if !strings.Contains(string(content), required) {
-			t.Errorf("domestic.txt is missing Steam direct rule %q", required)
+			t.Errorf("direct.txt is missing Steam direct rule %q", required)
+		}
+	}
+}
+
+func TestAppleDomainsUseDirectPath(t *testing.T) {
+	path := filepath.Join("..", "..", "config", "defaults", "direct.txt")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"domain:aaplimg.com",
+		"domain:apple-cloudkit.com",
+		"domain:apple-dns.net",
+		"domain:apple-mapkit.com",
+		"domain:apple.com",
+		"domain:applemusic.com",
+		"domain:appstore.com",
+		"domain:cdn-apple.com",
+		"domain:icloud-content.com",
+		"domain:icloud.com",
+		"domain:itunes.com",
+		"domain:mac.com",
+		"domain:me.com",
+		"domain:mzstatic.com",
+	} {
+		if !strings.Contains(string(content), required) {
+			t.Errorf("direct.txt is missing Apple direct rule %q", required)
 		}
 	}
 }
@@ -291,7 +317,7 @@ func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 		"tag: classify_path",
 		"resp_ip $cn_ips",
 		"exec: goto validated_foreign_path",
-		"# The three mappings are fast paths, not the final classifier.",
+		"# The two mappings are fast paths, not the final classifier.",
 	} {
 		if !strings.Contains(config, required) {
 			t.Errorf("mosdns.yaml.tmpl is missing %q", required)
