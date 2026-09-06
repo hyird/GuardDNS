@@ -307,6 +307,38 @@ func TestAppleDomainsUseDirectPath(t *testing.T) {
 	}
 }
 
+func TestForeignDoHEndpointsUseBundledProxyPath(t *testing.T) {
+	direct, err := os.ReadFile(filepath.Join("..", "..", "config", "defaults", "direct.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"full:dns.google", "full:cloudflare-dns.com"} {
+		if strings.Contains(string(direct), forbidden) {
+			t.Errorf("direct.txt must not contain foreign DoH endpoint %q", forbidden)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"'full:dns.google'", "'full:cloudflare-dns.com'", ">> /out/proxy.txt"} {
+		if !strings.Contains(string(dockerfile), required) {
+			t.Errorf("Dockerfile is missing bundled proxy rule %q", required)
+		}
+	}
+
+	template, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directMatch := strings.Index(string(template), "- qname $direct_domains\n        exec: guarddns_decision direct")
+	proxyMatch := strings.Index(string(template), "- qname $proxy_domains\n        exec: guarddns_decision proxy")
+	if directMatch == -1 || proxyMatch == -1 || directMatch > proxyMatch {
+		t.Error("direct rule matching must precede proxy matching")
+	}
+}
+
 func TestUnknownDomainsUseRealIPClassification(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "config", "mosdns.yaml.tmpl"))
 	if err != nil {

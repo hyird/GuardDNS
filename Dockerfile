@@ -57,6 +57,9 @@ RUN set -eux; \
     echo "${RULES_SHA256}  /tmp/rules.zip" | sha256sum -c -; \
     unzip -j /tmp/rules.zip proxy-list.txt -d /tmp/rules; \
     cp /tmp/rules/proxy-list.txt /out/proxy.txt; \
+    printf '%s\n' \
+      'full:dns.google' \
+      'full:cloudflare-dns.com' >> /out/proxy.txt; \
     if [ -s /vendor/cncidr.txt ]; then \
       cp /vendor/cncidr.txt /tmp/cncidr.yaml; \
     else \

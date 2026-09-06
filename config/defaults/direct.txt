@@ -1,5 +1,3 @@
-full:dns.google
-full:cloudflare-dns.com
 full:dns.alidns.com
 full:doh.pub
 full:doh.360.cn

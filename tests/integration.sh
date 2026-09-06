@@ -32,7 +32,7 @@ fail() {
 }
 
 docker network create "$network" >/dev/null
-: >"$rule_overrides/proxy.txt"
+printf 'full:dns.google\nfull:cloudflare-dns.com\n' >"$rule_overrides/proxy.txt"
 
 # A classified-global name must reach Mihomo without an encrypted real lookup
 # first, so the list is exercised with a name that has no real answer at all.
@@ -84,7 +84,7 @@ docker run -d \
 ready=0
 i=0
 while [ "$i" -lt 40 ]; do
-  if docker exec "$client_name" dig +time=1 +tries=1 +short "@$dns_ip" dns.google A \
+  if docker exec "$client_name" dig +time=1 +tries=1 +short "@$dns_ip" doh.pub A \
       | grep -Eq '^[0-9]+\.'; then
     ready=1
     break
@@ -138,10 +138,17 @@ mosdns_pid_after_reload=$(docker exec "$dns_name" pidof mosdns)
 [ "$mosdns_pid_after_reload" = "$mosdns_pid_before_reload" ] \
   || fail "MosDNS restarted instead of hot-reloading rules"
 
-control_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" dns.google A)
-[ -n "$control_answer" ] || fail "real-IP domain returned no A record"
-printf '%s\n' "$control_answer" | grep -q '198\.18\.0\.42' \
-  && fail "real-IP domain leaked into fake-IP mode"
+for foreign_doh in dns.google cloudflare-dns.com; do
+  proxy_answer=$(docker exec "$client_name" \
+    dig +time=3 +tries=1 +short "@$dns_ip" "$foreign_doh" A)
+  printf '%s\n' "$proxy_answer" | grep -qx '198.18.0.42' \
+    || fail "foreign DoH domain did not use the proxy path: $foreign_doh"
+done
+
+direct_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short "@$dns_ip" doh.pub A)
+[ -n "$direct_answer" ] || fail "direct domain returned no A record"
+printf '%s\n' "$direct_answer" | grep -q '198\.18\.0\.42' \
+  && fail "direct domain leaked into fake-IP mode"
 
 secure_answer=$(docker exec "$client_name" dig +time=3 +tries=1 +short -p 5304 "@$dns_ip" www.google.com A)
 [ -n "$secure_answer" ] || fail "secure listener returned no A record"
@@ -171,7 +178,7 @@ secure_aaaa_answer=$(docker exec "$client_name" \
   dig +time=3 +tries=1 +short -p 5304 "@$dns_ip" cloudflare.com AAAA)
 [ -z "$secure_aaaa_answer" ] || fail "secure listener returned an AAAA record"
 
-tcp_answer=$(docker exec "$client_name" dig +tcp +time=3 +tries=1 +short "@$dns_ip" dns.google A)
+tcp_answer=$(docker exec "$client_name" dig +tcp +time=3 +tries=1 +short "@$dns_ip" doh.pub A)
 [ -n "$tcp_answer" ] || fail "TCP listener returned no A record"
 
 docker exec "$dns_name" /usr/local/bin/guarddns-healthcheck \
@@ -341,7 +348,7 @@ dns_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{e
 ready=0
 i=0
 while [ "$i" -lt 40 ]; do
-  if docker exec "$client_name" dig +time=1 +tries=1 +short "@$dns_ip" dns.google A \
+  if docker exec "$client_name" dig +time=1 +tries=1 +short "@$dns_ip" doh.pub A \
       | grep -Eq '^[0-9]+\.'; then
     ready=1
     break
